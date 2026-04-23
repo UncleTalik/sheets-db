@@ -84,10 +84,27 @@ exist. Your email is already in the allowlist.
 
 <https://console.cloud.google.com/apis/credentials>:
 
-1. Create a project if you don't have one.
-2. If prompted, configure the **OAuth consent screen**: User type
-   *External*, app name `sheetsdb`, user support email = yours. Add your
-   email under "Test users".
+1. **Create a new Google Cloud project for this app** — one project per
+   SheetsDB-backed app, named after the app (e.g. `family-expenses`, not
+   a generic `sheetsdb`). Don't reuse an existing project.
+
+   Why a dedicated project: the OAuth **consent screen** (app name, logo,
+   support email, verification status, test-user list) is configured once
+   per project and is what every signed-in user sees when they grant
+   access. Sharing one project across apps means users see a generic name
+   instead of the app they're signing into, all your apps get entangled
+   under one verification status, and a problem with one app affects all
+   the others. Each SheetsDB app already has its own spreadsheet + Apps
+   Script + `OAUTH_CLIENT_ID` — keeping the GCP project per-app keeps
+   that boundary symmetric. The only cost is ~5 minutes to fill in the
+   consent screen.
+
+2. Configure the **OAuth consent screen** (first time in this project):
+   User type *External*, **app name = the actual app name** (the one
+   users will see on the Google prompt, e.g. `Family Expenses`), user
+   support email = yours. Add every email that will sign in under "Test
+   users" — while the app is in Testing mode, only listed test users can
+   get past the Google consent prompt.
 3. **Credentials → Create Credentials → OAuth client ID → Web application**.
 4. Under **Authorized JavaScript origins**, add where your frontend will run:
    - Local dev: `http://localhost:5173`
