@@ -1,0 +1,57 @@
+name: Deploy example to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'client/**'
+      - 'example/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/deploy-example.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One in-flight deployment at a time; don't cancel a deploy mid-publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - run: npm ci
+
+      # Client must be built before the example imports it — the workspace
+      # link resolves to dist/, which is gitignored and not present in CI.
+      - run: npm run build --workspace client
+
+      - name: Build example
+        run: npm run build --workspace example
+        env:
+          VITE_SHEETSDB_URL: ${{ secrets.SHEETSDB_URL }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+
+      - uses: actions/configure-pages@v4
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: example/dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
