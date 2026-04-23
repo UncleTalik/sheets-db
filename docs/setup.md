@@ -18,6 +18,25 @@ This document covers the same steps with more context, plus troubleshooting.
 Reads (`select`, `schema`) skip the script lock; mutations
 (`insert`/`update`/`delete`/`provision`) acquire it with a 10 s timeout.
 
+## OAuth scopes (what Google asks you to authorize)
+
+The manifest requests two scopes — both deliberately minimal:
+
+| Scope | Google's consent-screen label | Why we need it |
+|---|---|---|
+| `spreadsheets.currentonly` | *"See, edit, create, and delete this spreadsheet only"* | CRUD on the single container spreadsheet — **not** your other sheets. |
+| `script.external_request` | *"Connect to an external service"* | One outbound HTTPS call to `oauth2.googleapis.com/tokeninfo` to verify Google ID tokens. No user data leaves the script. |
+
+`spreadsheets.currentonly` only works because this is a **container-bound**
+script (you opened the editor via Extensions → Apps Script on the sheet).
+If you ever move the script to a standalone project, you'd have to switch
+to the broader `spreadsheets` scope and pair it with `openById()` — don't
+do that unless you need it.
+
+If you change the manifest, Apps Script forces you to re-authorize on the
+next run or redeploy. You can revoke the old authorization at
+<https://myaccount.google.com/permissions>.
+
 ## Script properties
 
 Set under **Project Settings (⚙) → Script properties**.
