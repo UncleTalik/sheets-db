@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SheetsDB example — expense tracker</title>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+      h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+      .bar { display: flex; gap: .5rem; align-items: center; margin-bottom: 1.5rem; }
+      .bar .spacer { flex: 1; }
+      button { cursor: pointer; padding: .4rem .8rem; }
+      form { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-bottom: 1.5rem; }
+      form input, form select, form button { padding: .4rem .6rem; }
+      form button { grid-column: 1 / -1; }
+      ul { list-style: none; padding: 0; margin: 0; }
+      li { display: flex; gap: .75rem; padding: .5rem 0; border-bottom: 1px solid #8884; }
+      li .amount { font-variant-numeric: tabular-nums; min-width: 5rem; text-align: right; }
+      li .category { flex: 1; }
+      li .delete { background: none; border: 0; color: #c33; }
+      .status { color: #888; font-size: .9rem; }
+      .error { color: #c33; }
+    </style>
+  </head>
+  <body>
+    <h1>Expense tracker (SheetsDB dogfood)</h1>
+    <div class="bar">
+      <span id="user" class="status">Not signed in</span>
+      <span class="spacer"></span>
+      <button id="sign-in">Sign in with Google</button>
+      <button id="sign-out" hidden>Sign out</button>
+    </div>
+    <div id="error" class="error" hidden></div>
+    <form id="add-form" hidden>
+      <input name="amount" type="number" step="0.01" placeholder="Amount" required />
+      <input name="category" type="text" placeholder="Category" required />
+      <input name="note" type="text" placeholder="Note (optional)" style="grid-column: 1 / -1" />
+      <button type="submit">Add expense</button>
+    </form>
+    <ul id="list"></ul>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

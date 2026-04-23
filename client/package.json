@@ -1,0 +1,50 @@
+{
+  "name": "@UncleTalik/sheetsdb-client",
+  "version": "0.1.0",
+  "description": "Typed client for the SheetsDB Apps Script backend",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UncleTalik/sheets-db.git"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run test && npm run typecheck"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.6.0"
+  },
+  "peerDependencies": {},
+  "keywords": [
+    "google-sheets",
+    "apps-script",
+    "backend",
+    "database"
+  ],
+  "license": "MIT"
+}

@@ -1,1 +1,283 @@
 # sheets-db
+
+Turn a Google Spreadsheet into a typed, validated row store your browser app
+can call over the network — with Google Sign-In for auth, a declarative
+schema, and no servers to manage.
+
+- **Free.** Runs on Google Apps Script + a Google Sheet you already own.
+- **Private.** Per-user allowlist. Only emails you add can read or write.
+- **Typed.** TypeScript client with `db.table<Expense>("expenses").select()`.
+- **Self-provisioning.** Define your schema in code; call `db.provision(...)`
+  once and the backend creates the sheets and `_meta` rows for you.
+- **Zero runtime deps.** The client is ~5 KB gzipped.
+
+## Is this for you?
+
+| Good fit | Not a good fit |
+|---|---|
+| Family apps, internal tools, side projects | Public-facing apps with thousands of users |
+| ≤ a few hundred ops/day | High write throughput (the Sheets API is slow) |
+| Simple equality filters, lookup by id | Complex joins, aggregates, transactions |
+| You want your data in a spreadsheet you can open | You need strict schema migrations or replication |
+
+Rough performance ceiling: ~500ms-1s per request (Sheets API latency). Plan
+for a few hundred ops/day, not a few hundred ops/minute.
+
+---
+
+## Getting started
+
+Fifteen to twenty minutes end-to-end. You will:
+
+1. Create a Google Spreadsheet (1 min)
+2. Paste the Apps Script files (2 min)
+3. Run `bootstrap()` to create the infrastructure sheets (30 sec)
+4. Create a Google OAuth client ID (5 min)
+5. Set two Script Properties (1 min)
+6. Deploy as a Web App and copy the URL (2 min)
+7. Install the client in your app (2 min)
+8. Call `db.provision()` once to define your tables (1 min)
+9. Use `db.table(...)` for CRUD (ongoing)
+
+The Apps Script side is in `apps-script/`. The client is
+`@UncleTalik/sheetsdb-client`, published to GitHub Packages.
+
+### 1. Create the Spreadsheet
+
+Open <https://sheets.new>. Rename it (e.g. `my-app-db`). That's it — don't
+add any sheets yet. `bootstrap()` will do that in step 3.
+
+### 2. Paste the Apps Script files
+
+In the spreadsheet: **Extensions → Apps Script**. Delete the default
+`Code.gs` stub. Then, for each file in this repo's [`apps-script/`](./apps-script)
+directory, click **+ → Script** in the editor and paste:
+
+- `Main.gs` — entry point + RPC dispatch
+- `Auth.gs` — ID token verification + allowlist
+- `Schema.gs` — `_meta` reader + row validation
+- `Table.gs` — CRUD helpers
+- `Provision.gs` — `db.provision()` implementation
+- `Bootstrap.gs` — the one-time `bootstrap()` runner
+- `Test.gs` — manual smoke test
+
+Then click the **⚙ Project Settings** gear → "Show 'appsscript.json' manifest
+file in editor", and replace its contents with
+[`apps-script/appsscript.json`](./apps-script/appsscript.json).
+
+### 3. Run `bootstrap()`
+
+In the editor, select the `bootstrap` function from the dropdown and click
+**Run ▶**. Authorize the requested scopes when prompted. The execution log
+should print:
+
+```
+Bootstrap results:
+  • created _meta
+  • created _allowlist and seeded with your.email@gmail.com
+```
+
+Open the spreadsheet and confirm the `_meta` and `_allowlist` sheets now
+exist. Your email is already in the allowlist.
+
+### 4. Create an OAuth 2.0 Client ID
+
+<https://console.cloud.google.com/apis/credentials>:
+
+1. Create a project if you don't have one.
+2. If prompted, configure the **OAuth consent screen**: User type
+   *External*, app name `sheetsdb`, user support email = yours. Add your
+   email under "Test users".
+3. **Credentials → Create Credentials → OAuth client ID → Web application**.
+4. Under **Authorized JavaScript origins**, add where your frontend will run:
+   - Local dev: `http://localhost:5173`
+   - GitHub Pages: `https://<your-github-username>.github.io`
+5. Click **Create**. Copy the **Client ID** (ends in
+   `.apps.googleusercontent.com`).
+
+### 5. Set Script Properties
+
+Back in the Apps Script editor: **Project Settings (⚙) → Script properties →
+Add script property**. Add two:
+
+| Property | Value | Required for |
+|---|---|---|
+| `OAUTH_CLIENT_ID` | the Client ID from step 4 | every request |
+| `OWNER_EMAIL` | your Google account email | `db.provision()` calls |
+
+`OWNER_EMAIL` gates `provision` to a single admin — other allowlisted users
+can read/write but can't reshape the schema.
+
+### 6. Deploy as a Web App
+
+In the editor: **Deploy → New deployment → ⚙ → Web app**:
+
+- **Execute as**: *Me*
+- **Who has access**: *Anyone*
+
+Click **Deploy** and authorize. Copy the **Web app URL** (ends in `/exec`).
+
+> "Who has access: Anyone" sounds alarming — but the `_allowlist` is what
+> actually protects you. Apps Script Web Apps can't authenticate the
+> *caller* as a Google user, so the backend verifies the ID token itself and
+> checks the allowlist.
+
+### 7. Install the client in your app
+
+The package is on GitHub Packages (private registry). You need a token to
+install it.
+
+Create a classic PAT at <https://github.com/settings/tokens> with scope
+`read:packages`. In your app's shell:
+
+```bash
+export GITHUB_PACKAGES_TOKEN=ghp_your_token_here   # add to ~/.zshrc
+```
+
+Commit this `.npmrc` in your app repo (no secrets in it — the token comes
+from the env):
+
+```
+@UncleTalik:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+```
+
+Install:
+
+```bash
+npm install @UncleTalik/sheetsdb-client
+```
+
+And add this to your `index.html` — GIS is not bundled:
+
+```html
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+```
+
+### 8. Sign in and provision your schema
+
+```ts
+import { createClient } from "@UncleTalik/sheetsdb-client";
+
+const db = createClient({
+  webAppUrl: import.meta.env.VITE_SHEETSDB_URL,         // from step 6
+  googleClientId: import.meta.env.VITE_GOOGLE_CLIENT_ID, // from step 4
+});
+
+await db.signIn();
+
+await db.provision({
+  tables: {
+    expenses: [
+      { column: "id",        type: "string",   required: true, unique: true, default: "auto" },
+      { column: "createdAt", type: "datetime", required: true, default: "now" },
+      { column: "amount",    type: "number",   required: true },
+      { column: "category",  type: "string",   required: true },
+      { column: "note",      type: "string" },
+    ],
+  },
+  allowlist: ["partner@example.com"],   // optional: add more users
+});
+```
+
+Call `provision` from a one-off admin page or the browser console — you
+don't need it on every app load. It's idempotent: running it twice is fine.
+Existing tables, columns, and allowlist entries are never overwritten or
+removed.
+
+The supported types are `string`, `number`, `boolean`, `datetime`, and
+`enum:a|b|c`. Special defaults: `auto` (required on the `id` column —
+generates short IDs like `exp_k3j8f2a1bc`) and `now` (ISO timestamp).
+
+### 9. Use it
+
+```ts
+interface Expense {
+  id: string;
+  createdAt: string;
+  amount: number;
+  category: string;
+  note?: string;
+}
+
+const list = await db.table<Expense>("expenses")
+  .where({ category: "groceries" })
+  .select();
+
+const created = await db.table<Expense>("expenses").insert({
+  amount: 42.5,
+  category: "groceries",
+  note: "milk",
+});
+
+await db.table<Expense>("expenses").update(created.id, { amount: 43 });
+await db.table<Expense>("expenses").delete(created.id);
+```
+
+Errors surface as `SheetsDBError` with a `code` and `details`:
+
+```ts
+import { SheetsDBError } from "@UncleTalik/sheetsdb-client";
+
+try {
+  await db.table("expenses").insert({ amount: "not-a-number" });
+} catch (err) {
+  if (err instanceof SheetsDBError) {
+    console.log(err.code, err.details);
+    // "validation", "amount must be a number"
+  }
+}
+```
+
+Error codes: `unauthorized`, `validation`, `not_found`, `bad_request`,
+`busy`, `misconfigured`, `internal`.
+
+---
+
+## Going deeper
+
+- [Apps Script reference implementation](./apps-script) — the backend code.
+- [`client/README.md`](./client/README.md) — full client API reference.
+- [`docs/setup.md`](./docs/setup.md) — backend troubleshooting & advanced setup.
+- [`docs/schema.md`](./docs/schema.md) — `_meta` schema reference (types, defaults).
+- [`docs/consumer-setup.md`](./docs/consumer-setup.md) — deploying a webapp to
+  GitHub Pages that consumes the package.
+- [`docs/specs/sheets-db-design-spec.md`](./docs/specs/sheets-db-design-spec.md)
+  — architecture + RPC protocol.
+
+## Working on this repo
+
+This is a monorepo using npm workspaces:
+
+| Path | What |
+|---|---|
+| [`apps-script/`](./apps-script) | Backend (pasted into Apps Script editor). |
+| [`client/`](./client) | `@UncleTalik/sheetsdb-client` TypeScript source + tests. |
+| [`example/`](./example) | Dogfood expense-tracker app — uses the local client via a workspace link. |
+
+```bash
+npm install
+npm run test --workspace client    # unit tests
+npm run build --workspace client   # ESM + CJS + dts
+npm run dev --workspace example    # local expense tracker (needs .env.local)
+```
+
+The example app is the primary integration test — every client change is
+exercised against a real deployed backend before a release goes out.
+
+## Publishing
+
+```bash
+npm version patch --workspace client
+git push --follow-tags
+```
+
+The [`publish.yml`](./.github/workflows/publish.yml) workflow picks up the
+tag, builds, tests, and publishes to GitHub Packages.
+
+Version rule: **the client's major version must match the backend's major
+version.** Bump both together if you ever change the RPC wire format.
+
+## License
+
+MIT

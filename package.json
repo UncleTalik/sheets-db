@@ -1,0 +1,16 @@
+{
+  "name": "sheets-db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SheetsDB monorepo: Apps Script backend + TypeScript client + dogfood example",
+  "workspaces": [
+    "client",
+    "example"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace client",
+    "test": "npm run test --workspace client",
+    "typecheck": "npm run typecheck --workspace client",
+    "dev:example": "npm run dev --workspace example"
+  }
+}
