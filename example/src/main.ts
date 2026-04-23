@@ -1,5 +1,5 @@
 import { createClient, SheetsDBError } from "@UncleTalik/sheetsdb-client";
-import type { Expense } from "./types.js";
+import { EXPENSES_SCHEMA, type Expense } from "./types.js";
 
 const webAppUrl = import.meta.env.VITE_SHEETSDB_URL;
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -13,6 +13,10 @@ if (!webAppUrl || !googleClientId) {
 const db = createClient({ webAppUrl, googleClientId });
 const expenses = db.table<Expense>("expenses");
 
+if (import.meta.env.DEV) {
+  (window as unknown as { db: typeof db }).db = db;
+}
+
 const $ = <T extends Element = HTMLElement>(sel: string) =>
   document.querySelector(sel) as T;
 
@@ -22,6 +26,8 @@ const signOutBtn = $<HTMLButtonElement>("#sign-out");
 const form = $<HTMLFormElement>("#add-form");
 const list = $<HTMLUListElement>("#list");
 const errorBox = $<HTMLDivElement>("#error");
+const setupBox = $<HTMLDivElement>("#setup");
+const setupRunBtn = $<HTMLButtonElement>("#setup-run");
 
 function showError(message: string) {
   errorBox.textContent = message;
@@ -37,7 +43,6 @@ function setSignedIn(email: string) {
   userLabel.textContent = email;
   signInBtn.hidden = true;
   signOutBtn.hidden = false;
-  form.hidden = false;
 }
 
 function setSignedOut() {
@@ -45,7 +50,19 @@ function setSignedOut() {
   signInBtn.hidden = false;
   signOutBtn.hidden = true;
   form.hidden = true;
+  setupBox.hidden = true;
   list.innerHTML = "";
+}
+
+function showSetup() {
+  setupBox.hidden = false;
+  form.hidden = true;
+  list.innerHTML = "";
+}
+
+function showReady() {
+  setupBox.hidden = true;
+  form.hidden = false;
 }
 
 function handleError(err: unknown) {
@@ -60,6 +77,7 @@ async function refresh() {
   clearError();
   try {
     const rows = await expenses.select();
+    showReady();
     rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     list.innerHTML = "";
     for (const row of rows) {
@@ -86,6 +104,10 @@ async function refresh() {
       list.appendChild(li);
     }
   } catch (err) {
+    if (err instanceof SheetsDBError && err.code === "not_found") {
+      showSetup();
+      return;
+    }
     handleError(err);
   }
 }
@@ -104,6 +126,22 @@ signInBtn.addEventListener("click", async () => {
 signOutBtn.addEventListener("click", () => {
   db.signOut();
   setSignedOut();
+});
+
+setupRunBtn.addEventListener("click", async () => {
+  clearError();
+  setupRunBtn.disabled = true;
+  const originalLabel = setupRunBtn.textContent;
+  setupRunBtn.textContent = "Creating…";
+  try {
+    await db.provision({ tables: { expenses: EXPENSES_SCHEMA } });
+    await refresh();
+  } catch (err) {
+    handleError(err);
+  } finally {
+    setupRunBtn.disabled = false;
+    setupRunBtn.textContent = originalLabel;
+  }
 });
 
 form.addEventListener("submit", async (e) => {
