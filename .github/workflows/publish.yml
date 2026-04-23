@@ -1,7 +1,20 @@
 name: Publish client to GitHub Packages
+
+# Auto-publish on every push to main — but only when client/package.json's
+# `version` field is one we haven't published before. Bumping the version in
+# a PR (or a follow-up commit on main) is the release signal. Doc-only PRs
+# and code changes without a version bump are ignored.
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths:
+      - 'client/package.json'
+      - '.github/workflows/publish.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-client
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -11,14 +24,44 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: 'https://npm.pkg.github.com'
           scope: '@UncleTalik'
+          cache: 'npm'
+
+      - name: Decide whether to publish
+        id: decide
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          current=$(node -p "require('./client/package.json').version")
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
+          # `npm view <pkg>@<exact-version>` exits non-zero if that version
+          # doesn't exist yet. Silence normal output; the exit code is the signal.
+          if npm view "@UncleTalik/sheetsdb-client@${current}" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Version ${current} is already published on GitHub Packages — skipping."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Version ${current} is not yet published — building and publishing."
+          fi
+
       - run: npm ci
-      - run: npm run build --workspace client
+        if: steps.decide.outputs.publish == 'true'
+
+      - run: npm run typecheck --workspace client
+        if: steps.decide.outputs.publish == 'true'
+
       - run: npm run test --workspace client
+        if: steps.decide.outputs.publish == 'true'
+
+      - run: npm run build --workspace client
+        if: steps.decide.outputs.publish == 'true'
+
       - run: npm publish --workspace client
+        if: steps.decide.outputs.publish == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
