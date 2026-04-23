@@ -111,6 +111,32 @@ deployment) keeps the `/exec` URL stable.
 If you ever create a *new* deployment (vs. editing the existing one), the
 URL changes and every consumer has to be updated.
 
+### "Who has access" — the Anyone vs. Anyone-with-Google trap
+
+This is the most common setup failure. The dropdown has three values and
+only one works for a browser-based frontend:
+
+| Value | Behavior |
+|---|---|
+| **Only myself** | Only the deploying user can hit the endpoint — useless for a frontend. |
+| **Anyone with a Google account** | Google gates the endpoint behind a session-cookie check *before* your `doPost` runs. Cross-origin `fetch` from a browser does not send cookies, so the request gets a 401 with an HTML error page — and because that error page is not served by your script, it has **no CORS headers**. Symptom: `Access to fetch at ... blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present`. |
+| **Anyone** ← required | Unauthenticated HTTP reaches `doPost`. Your script handles auth itself via ID token + `_allowlist`. |
+
+How to confirm which one is set without opening the editor:
+
+```bash
+# If "Anyone with a Google account", this returns 401 with HTML.
+# If "Anyone", it returns 200 with JSON ({ok:false, error:"unauthorized"}).
+curl -i -L -X POST '<your /exec URL>' -H 'Content-Type: text/plain' -d '{}'
+```
+
+Opening the URL in your browser is misleading because you're already
+signed into Google — both settings will serve the `doGet` health check.
+`curl` (no cookies) gives you the ground truth.
+
+Fix: **Deploy → Manage deployments → ✎ → Who has access: *Anyone* → Version:
+New version → Deploy.** URL stays the same.
+
 ## Running `bootstrap()` and `runSmokeTest`
 
 Both are editor-only — they bypass auth. Select the function from the
@@ -150,6 +176,12 @@ created. Re-run `provision` with its schema.
 
 **`busy: could not acquire lock`** — another mutation is in flight and took
 longer than 10 s. Usually transient; retry.
+
+**Browser error: `blocked by CORS policy: No 'Access-Control-Allow-Origin'
+header is present`** — the deployment's *Who has access* is set to **Anyone
+with a Google account** instead of **Anyone**. See ["Who has access" — the
+Anyone vs. Anyone-with-Google trap](#who-has-access--the-anyone-vs-anyone-with-google-trap)
+above.
 
 **Requests time out silently** — Apps Script responds to cross-origin POSTs
 with a 302 redirect to `googleusercontent.com`. Browsers follow it
