@@ -353,13 +353,27 @@ production builds — `npm run dev --workspace example` still serves at
 
 ## Publishing
 
-```bash
-npm version patch --workspace client
-git push --follow-tags
-```
+The client is published to GitHub Packages **automatically on every push
+to `main` that bumps the `version` field in
+[`client/package.json`](./client/package.json)**. No tags, no CLI dance.
 
-The [`publish.yml`](./.github/workflows/publish.yml) workflow picks up the
-tag, builds, tests, and publishes to GitHub Packages.
+To cut a release:
+
+1. In a PR (or a follow-up commit on `main`), change the `version` field in
+   `client/package.json` — e.g. `0.1.0` → `0.1.1` for a patch, `0.2.0` for
+   a minor, `1.0.0` for a major. Pick the bump based on what actually
+   changed, not a schedule.
+2. Merge.
+3. The [`publish.yml`](./.github/workflows/publish.yml) workflow fires,
+   checks whether that exact version is already on GitHub Packages (skips
+   if so), then typechecks, tests, builds, and publishes.
+
+Doc-only or non-version PRs don't trigger a publish — the path filter is
+scoped to `client/package.json`.
+
+If you need to re-run a publish manually (e.g. you hand-rolled something
+else and just want to try again), trigger the workflow from the Actions
+tab via **Run workflow** — same logic, same idempotency check.
 
 Version rule: **the client's major version must match the backend's major
 version.** Bump both together if you ever change the RPC wire format.
