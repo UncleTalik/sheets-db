@@ -291,6 +291,66 @@ npm run dev --workspace example    # local expense tracker (needs .env.local)
 The example app is the primary integration test — every client change is
 exercised against a real deployed backend before a release goes out.
 
+## Live demo: deploying the example to GitHub Pages
+
+A GitHub Actions workflow at
+[`.github/workflows/deploy-example.yml`](./.github/workflows/deploy-example.yml)
+publishes the example app to GitHub Pages on every push to `main` that
+touches `client/`, `example/`, or the workspace root. Once configured, the
+app is available at **<https://uncletalik.github.io/sheets-db/>**.
+
+### One-time setup (required before the first deploy)
+
+The workflow will fail until you do all three:
+
+**1. Add repo secrets.** Settings → Secrets and variables → Actions → **New
+repository secret**:
+
+| Name | Value |
+|---|---|
+| `SHEETSDB_URL` | your Apps Script `/exec` URL |
+| `GOOGLE_CLIENT_ID` | your OAuth 2.0 Client ID |
+
+Neither is actually secret (the web-app URL is public, OAuth client IDs
+are designed to be public) — using repo secrets just makes rotation
+clean. They're inlined into the bundle at build time, never sent to the
+browser as runtime state.
+
+**2. Enable Pages.** Settings → Pages → **Source: GitHub Actions**.
+Don't pick "Deploy from a branch" — that's a different deploy mode and
+won't work with this workflow.
+
+**3. Add the Pages origin to Google OAuth.**
+<https://console.cloud.google.com/apis/credentials> → edit your OAuth
+client ID → **Authorized JavaScript origins** → add
+`https://uncletalik.github.io`. Without this the GIS sign-in popup
+refuses to open on the deployed site (silent failure).
+
+Note: the origin is just scheme + host, **not** the `/sheets-db/` path.
+If you later deploy more SheetsDB apps to other `github.io/<repo>/`
+paths, one origin covers all of them.
+
+### Running the workflow
+
+Any push to `main` that touches the watched paths triggers it. You can
+also trigger it by hand: **Actions → Deploy example to GitHub Pages →
+Run workflow**.
+
+### How the build works
+
+1. `npm ci` resolves the workspace link for the client package.
+2. `npm run build --workspace client` produces `client/dist/` (gitignored,
+   not present in CI).
+3. `npm run build --workspace example` inlines the two env vars and
+   prefixes asset URLs with `/sheets-db/` (Pages serves from
+   `https://<user>.github.io/<repo>/`, so asset paths need the repo name).
+4. `example/dist` is uploaded as a Pages artifact and deployed.
+
+The `base: "/sheets-db/"` setting lives in
+[`example/vite.config.ts`](./example/vite.config.ts) and only applies to
+production builds — `npm run dev --workspace example` still serves at
+`http://localhost:5173/`.
+
 ## Publishing
 
 ```bash

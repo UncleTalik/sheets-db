@@ -4,6 +4,10 @@ A minimal Vite + TypeScript app that consumes `@UncleTalik/sheetsdb-client`
 through an npm workspace link. Every change to the client is exercised here
 before we ship.
 
+**Live demo**: <https://uncletalik.github.io/sheets-db/> (deployed from `main`
+by [`.github/workflows/deploy-example.yml`](../.github/workflows/deploy-example.yml)).
+Setup runbook in the [root README](../README.md#live-demo-deploying-the-example-to-github-pages).
+
 ## Prerequisites
 
 You need a deployed Apps Script backend (see [`../docs/setup.md`](../docs/setup.md))
