@@ -50,13 +50,33 @@ Set under **Project Settings (⚙) → Script properties**.
 manage `_meta` by hand. But if any call to `provision` comes in without it
 set, the backend responds `misconfigured`.
 
+## One GCP project per app
+
+Create a **new Google Cloud project for each SheetsDB-backed app** (e.g.
+`family-expenses`, `chores-tracker`) rather than reusing one generic
+`sheetsdb` project across all of them. The consent screen is configured
+per-project and is what every signed-in user sees — matching app name +
+logo + support email to the actual app is worth the 5-minute cost of a
+new project. You also get:
+
+- **Independent verification status.** If one app ever outgrows Testing
+  mode and needs Google's verification, it doesn't entangle the others.
+- **Independent test-user list.** Each app's testers match that app's
+  audience.
+- **Clean isolation.** Deleting a project cleanly nukes one app's OAuth
+  without touching anything else.
+
+Each SheetsDB app already has its own spreadsheet + Apps Script + `OAUTH_CLIENT_ID`
+script property. Project-per-app keeps that mental model symmetric.
+
 ## OAuth consent screen
 
-First time only. In Google Cloud Console → **APIs & Services → OAuth consent
-screen**:
+First time in each project. In Google Cloud Console → **APIs & Services
+→ OAuth consent screen**:
 
 - **User type**: External.
-- **App name**: `sheetsdb` (or anything).
+- **App name**: the **actual app name users will see on the consent
+  prompt** (e.g. `Family Expenses`) — not `sheetsdb`.
 - **User support email**: yours.
 - **Developer contact**: yours.
 - **Scopes**: none beyond the default (Google Identity gives us email +
