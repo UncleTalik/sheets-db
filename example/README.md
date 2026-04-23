@@ -22,16 +22,38 @@ cp example/.env.example example/.env.local
 npm run dev --workspace example
 ```
 
-Open <http://localhost:5173>, sign in with an allowlisted Google account, and
-add an expense. Refresh — the row should still be there. Open the Sheet in
-another tab and confirm the row was written with an auto-generated `id` and
-`createdAt`.
+Open <http://localhost:5173>, sign in with an allowlisted Google account.
+
+**First run only**: if the `expenses` sheet doesn't exist yet, the app
+catches the `not_found` error and shows a *"Create expenses table"*
+button. Clicking it calls `db.provision({ tables: { expenses: [...] } })`
+to create the sheet and its `_meta` rows. Requires the `OWNER_EMAIL`
+Script Property to match your signed-in account.
+
+After that, add an expense. Refresh — the row should still be there. Open
+the Sheet in another tab and confirm the row was written with an
+auto-generated `id` and `createdAt`.
+
+## DevTools handle
+
+In `npm run dev`, `db` is exposed on `window` for console tinkering:
+
+```js
+await db.schema()
+await db.table("expenses").where({ category: "groceries" }).select()
+```
+
+The `window` exposure is gated by `import.meta.env.DEV`, so production
+builds don't carry it.
 
 ## What this exercises
 
 - `signIn()` — Google Identity Services popup.
+- `db.provision(...)` — declarative first-run table creation.
 - `db.table<Expense>("expenses").select()` — read with type narrowing.
 - `db.table<Expense>("expenses").insert(...)` — write with validation + defaults.
 - `db.table<Expense>("expenses").delete(id)` — delete.
 - Error display — `SheetsDBError.code` and `details` surface the backend
-  error codes (`validation`, `unauthorized`, etc.).
+  error codes (`validation`, `unauthorized`, `not_found`, etc.).
+- First-run UX — the `not_found` branch shows an inline setup button
+  instead of a red error toast.
