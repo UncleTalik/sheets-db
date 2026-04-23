@@ -130,14 +130,23 @@ can read/write but can't reshape the schema.
 In the editor: **Deploy → New deployment → ⚙ → Web app**:
 
 - **Execute as**: *Me*
-- **Who has access**: *Anyone*
+- **Who has access**: *Anyone* — **not** *Anyone with a Google account*. This matters. See below.
 
 Click **Deploy** and authorize. Copy the **Web app URL** (ends in `/exec`).
 
-> "Who has access: Anyone" sounds alarming — but the `_allowlist` is what
-> actually protects you. Apps Script Web Apps can't authenticate the
-> *caller* as a Google user, so the backend verifies the ID token itself and
-> checks the allowlist.
+> ⚠️ **Anyone vs. Anyone with a Google account** — these look similar in the
+> dropdown and are the most common way to get stuck.
+>
+> | Setting | What actually happens |
+> |---|---|
+> | **Only myself** | Only the deployer can reach the endpoint. |
+> | **Anyone with a Google account** | Google enforces a session-cookie check before your code runs. Browsers don't send cookies with cross-origin `fetch`, so every request from your frontend fails with a 401 + **no CORS headers** — symptoms include `Access to fetch at ... has been blocked by CORS policy`. |
+> | **Anyone** ← pick this | Unauthenticated HTTP is allowed to reach `doPost`. The script itself verifies the Google ID token and checks `_allowlist` — that's the real auth. |
+>
+> "Anyone" sounds alarming but is exactly what SheetsDB is designed around.
+> Your data is protected by the `_allowlist` + ID token verification *inside*
+> the script. Google can't enforce cookie-based auth for cross-origin
+> browser calls, so we do it at the app layer instead.
 
 ### 7. Install the client in your app
 
