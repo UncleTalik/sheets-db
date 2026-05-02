@@ -112,11 +112,33 @@ async function refresh() {
   }
 }
 
+async function demoSystemTableGuard() {
+  // System tables (`_meta`, `_allowlist`, any `_*` name) are blocked from
+  // the RPC API by the client guard (>=0.3.0) and backend (>=1.1.0). This
+  // dev-only sanity check proves the rejection at runtime — useful as a
+  // regression smoke test when bumping either side.
+  try {
+    await db.table("_meta").select();
+    console.warn("[demo] expected system-table rejection, but read succeeded");
+  } catch (err) {
+    if (err instanceof SheetsDBError && err.code === "unauthorized") {
+      console.info(
+        `[demo] system-table guard rejected db.table("_meta").select(): ${err.code} — ${err.details ?? err.message}`,
+      );
+    } else {
+      console.warn("[demo] system-table guard threw unexpected error:", err);
+    }
+  }
+}
+
 signInBtn.addEventListener("click", async () => {
   clearError();
   try {
     const user = await db.signIn();
     setSignedIn(user.email);
+    if (import.meta.env.DEV) {
+      await demoSystemTableGuard();
+    }
     await refresh();
   } catch (err) {
     handleError(err);

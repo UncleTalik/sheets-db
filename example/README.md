@@ -45,10 +45,19 @@ In `npm run dev`, `db` is exposed on `window` for console tinkering:
 ```js
 await db.schema()
 await db.table("expenses").where({ category: "groceries" }).select()
+
+// System tables (`_meta`, `_allowlist`, any `_*`) are blocked from the
+// RPC API. Both calls below throw SheetsDBError({ code: "unauthorized" })
+// without any network round-trip — the client short-circuits locally:
+await db.table("_meta").select()       // → unauthorized
+await db.table("_allowlist").select()  // → unauthorized
 ```
 
 The `window` exposure is gated by `import.meta.env.DEV`, so production
-builds don't carry it.
+builds don't carry it. On every successful sign-in in dev, `main.ts`
+also runs `demoSystemTableGuard()` and logs the rejection to the
+console — handy as a regression smoke test when bumping the client or
+backend.
 
 ## What this exercises
 
@@ -61,3 +70,6 @@ builds don't carry it.
   error codes (`validation`, `unauthorized`, `not_found`, etc.).
 - First-run UX — the `not_found` branch shows an inline setup button
   instead of a red error toast.
+- System-table guard — dev-only `demoSystemTableGuard()` confirms that
+  `db.table("_meta").select()` rejects with `unauthorized` before any
+  network round-trip (client short-circuit).
