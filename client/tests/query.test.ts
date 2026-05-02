@@ -126,4 +126,70 @@ describe("TableQuery", () => {
     await base.select();
     expect(call).toHaveBeenLastCalledWith({ op: "select", table: "expenses", where: {} });
   });
+
+  it("operator clause passes through verbatim", async () => {
+    const { rpc, call } = mockRpc();
+    call.mockResolvedValueOnce([]);
+    await createTableQuery<Expense>(rpc, "expenses")
+      .where({ amount: { gte: 5, lt: 10 } })
+      .select();
+    expect(call).toHaveBeenCalledWith({
+      op: "select",
+      table: "expenses",
+      where: { amount: { gte: 5, lt: 10 } },
+    });
+  });
+
+  it("`in` array clause passes through verbatim", async () => {
+    const { rpc, call } = mockRpc();
+    call.mockResolvedValueOnce([]);
+    await createTableQuery<Expense>(rpc, "expenses")
+      .where({ category: { in: ["groceries", "gas"] } })
+      .select();
+    expect(call).toHaveBeenCalledWith({
+      op: "select",
+      table: "expenses",
+      where: { category: { in: ["groceries", "gas"] } },
+    });
+  });
+
+  it("`like` clause passes through verbatim", async () => {
+    const { rpc, call } = mockRpc();
+    call.mockResolvedValueOnce([]);
+    await createTableQuery<Expense>(rpc, "expenses")
+      .where({ note: { like: "%test%" } })
+      .select();
+    expect(call).toHaveBeenCalledWith({
+      op: "select",
+      table: "expenses",
+      where: { note: { like: "%test%" } },
+    });
+  });
+
+  it("primitive shorthand and operator clause coexist on different fields", async () => {
+    const { rpc, call } = mockRpc();
+    call.mockResolvedValueOnce([]);
+    await createTableQuery<Expense>(rpc, "expenses")
+      .where({ category: "groceries", amount: { gt: 1 } })
+      .select();
+    expect(call).toHaveBeenCalledWith({
+      op: "select",
+      table: "expenses",
+      where: { category: "groceries", amount: { gt: 1 } },
+    });
+  });
+
+  it("later where() replaces an operator clause on the same field", async () => {
+    const { rpc, call } = mockRpc();
+    call.mockResolvedValueOnce([]);
+    await createTableQuery<Expense>(rpc, "expenses")
+      .where({ amount: { gt: 5 } })
+      .where({ amount: { lt: 10 } })
+      .select();
+    expect(call).toHaveBeenCalledWith({
+      op: "select",
+      table: "expenses",
+      where: { amount: { lt: 10 } },
+    });
+  });
 });

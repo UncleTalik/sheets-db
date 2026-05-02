@@ -15,6 +15,12 @@
       form { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-bottom: 1.5rem; }
       form input, form select, form button { padding: .4rem .6rem; }
       form button { grid-column: 1 / -1; }
+      fieldset { border: 1px solid #8884; padding: .75rem 1rem 1rem; margin: 0 0 1.5rem; grid-column: 1 / -1; }
+      fieldset legend { padding: 0 .25rem; font-size: .9rem; }
+      fieldset > div { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+      fieldset label { display: flex; flex-direction: column; font-size: .85rem; gap: .15rem; }
+      fieldset .actions { display: flex; gap: .5rem; margin-top: .75rem; grid-column: 1 / -1; }
+      fieldset .actions button { padding: .35rem .8rem; }
       ul { list-style: none; padding: 0; margin: 0; }
       li { display: flex; gap: .75rem; padding: .5rem 0; border-bottom: 1px solid #8884; }
       li .amount { font-variant-numeric: tabular-nums; min-width: 5rem; text-align: right; }
@@ -51,6 +57,28 @@
       <input name="category" type="text" placeholder="Category" required />
       <input name="note" type="text" placeholder="Note (optional)" style="grid-column: 1 / -1" />
       <button type="submit">Add expense</button>
+    </form>
+    <form id="filter-form" hidden>
+      <fieldset>
+        <legend>Filter expenses</legend>
+        <div>
+          <label>Category equals <input name="cat-eq" /></label>
+          <label>Not category <input name="cat-ne" /></label>
+          <label>Category in (comma) <input name="cat-in" placeholder="groceries,gas" /></label>
+          <label>Exclude categories (comma) <input name="cat-nin" /></label>
+          <label>Amount &gt; <input name="amt-gt" type="number" step="0.01" /></label>
+          <label>Amount &ge; <input name="amt-gte" type="number" step="0.01" /></label>
+          <label>Amount &lt; <input name="amt-lt" type="number" step="0.01" /></label>
+          <label>Amount &le; <input name="amt-lte" type="number" step="0.01" /></label>
+          <label>Note like (% / _) <input name="note-like" placeholder="%coffee%" /></label>
+          <label>Created from <input name="date-from" type="date" /></label>
+          <label>Created to <input name="date-to" type="date" /></label>
+        </div>
+        <div class="actions">
+          <button type="submit">Apply</button>
+          <button type="button" id="filter-clear">Clear</button>
+        </div>
+      </fieldset>
     </form>
     <ul id="list"></ul>
     <script type="module" src="/src/main.ts"></script>
