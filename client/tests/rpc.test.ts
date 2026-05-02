@@ -126,6 +126,22 @@ describe("rpc", () => {
       await rpc.call({ op: "select", table: "expenses" });
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
+
+    it("rejects arrays that coerce to a leading-underscore string", async () => {
+      // A caller bypassing the TS type with ["_meta"] would otherwise be
+      // resolved by Google Sheets as "_meta". Defense-in-depth.
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await expect(
+        rpc.call({ op: "select", table: ["_meta"] as unknown as string }),
+      ).rejects.toMatchObject({
+        name: "SheetsDBError",
+        code: "unauthorized",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   it("provision sends op=provision with spec at top level (not in row)", async () => {

@@ -93,8 +93,14 @@ function requireObject(v, name) {
 // System sheets (names starting with "_") are infrastructure — `_meta`,
 // `_allowlist`, and any future `_*` we add. The owner manages them through
 // the spreadsheet UI; the RPC surface refuses them outright.
+//
+// We coerce via String() so a caller can't bypass the check by sending a
+// JSON array like ["_meta"] — Sheets would coerce that back to "_meta"
+// when used as a sheet name. requireString already rejects non-strings
+// before this is reached in dispatch, but the coercion makes the helper
+// safe for any future caller.
 function isSystemTable(name) {
-  return typeof name === "string" && name.charAt(0) === "_";
+  return String(name).charAt(0) === "_";
 }
 function rejectSystemTable(name) {
   if (isSystemTable(name)) {
