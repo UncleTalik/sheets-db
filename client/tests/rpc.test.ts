@@ -91,6 +91,87 @@ describe("rpc", () => {
     });
   });
 
+  describe("system table guard", () => {
+    it("rejects select against _meta without calling fetch", async () => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await expect(rpc.call({ op: "select", table: "_meta" })).rejects.toMatchObject({
+        name: "SheetsDBError",
+        code: "unauthorized",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects insert against _allowlist without calling fetch", async () => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await expect(
+        rpc.call({ op: "insert", table: "_allowlist", row: { email: "x@y.z" } }),
+      ).rejects.toMatchObject({
+        name: "SheetsDBError",
+        code: "unauthorized",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("still calls fetch for normal user tables", async () => {
+      const fetchMock = mockFetchJson({ ok: true, data: [] });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await rpc.call({ op: "select", table: "expenses" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      { label: "single-element array", value: ["_meta"] },
+      { label: "object with custom toString", value: { toString: () => "_evil" } },
+    ])(
+      "rejects $label that coerces to a leading-underscore string",
+      async ({ value }) => {
+        // A caller bypassing the TS type would otherwise be resolved by
+        // Google Sheets via String() coercion (e.g. ["_meta"] → "_meta").
+        const fetchMock = vi.fn();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+        await expect(
+          rpc.call({ op: "select", table: value as unknown as string }),
+        ).rejects.toMatchObject({
+          name: "SheetsDBError",
+          code: "unauthorized",
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      { label: "number", value: 42 },
+      { label: "boolean", value: true },
+      { label: "null", value: null },
+      { label: "object without leading-underscore toString", value: {} },
+    ])(
+      "lets $label through to the server (server is the boundary)",
+      async ({ value }) => {
+        // Inputs whose String() coercion does NOT start with "_" pass the
+        // client guard. The server's requireString then rejects them with
+        // bad_request — no system sheet is ever resolved.
+        const fetchMock = mockFetchJson({ ok: false, error: "bad_request" });
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+        await expect(
+          rpc.call({ op: "select", table: value as unknown as string }),
+        ).rejects.toMatchObject({ code: "bad_request" });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      },
+    );
+  });
+
   it("provision sends op=provision with spec at top level (not in row)", async () => {
     const result = {
       tablesCreated: ["expenses"],

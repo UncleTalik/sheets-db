@@ -139,6 +139,15 @@ Operations:
 
 `where` is an object of equality filters ANDed together. No `$gt`/`$lt`/`$or` in v1 — keep it simple; clients can filter further in memory.
 
+### Access control layers
+
+Each request passes through, in order:
+
+1. **Auth** — Google ID token verification + `_allowlist` membership check (`verifyAuth` in `Auth.gs`). Failure → `unauthorized`.
+2. **System-table guard** — `select`/`insert`/`update`/`delete` against any sheet whose name starts with `_` (e.g. `_meta`, `_allowlist`, future `_audit`) is rejected with `unauthorized`. The owner manages those sheets through the spreadsheet UI; the RPC surface refuses them. `provision` is the only path that legitimately writes `_meta` / `_allowlist`, and it rejects user-supplied `spec.tables` keys starting with `_` with `validation`.
+3. **Owner gate** (provision only) — caller's email must match the `OWNER_EMAIL` script property. Failure → `unauthorized`.
+4. **Script lock** — mutations serialize via `LockService` with a 10s timeout (`busy` on contention). Reads skip the lock.
+
 ---
 
 ## Backend: Apps Script — full reference implementation

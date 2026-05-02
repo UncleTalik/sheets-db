@@ -198,7 +198,7 @@ Error codes:
 
 | code             | meaning |
 |------------------|---------|
-| `unauthorized`   | No valid ID token, audience mismatch, email not verified, or not in allowlist. |
+| `unauthorized`   | No valid ID token, audience mismatch, email not verified, not in allowlist, **or attempt to access a reserved system table** (any name starting with `_`, e.g. `_meta`, `_allowlist`). |
 | `validation`     | Row failed schema validation (missing required, bad type, duplicate unique). |
 | `not_found`      | Table or row with given `id` does not exist. |
 | `bad_request`    | Request body missing a required field. |
@@ -218,6 +218,42 @@ after a page reload. This is intentional: it keeps the attack surface small.
 This package has no runtime dependencies. It uses the built-in `fetch` API and
 loads Google Identity Services from `https://accounts.google.com/gsi/client` at
 runtime (via the script tag you include in your HTML).
+
+## Migration: upgrading from 0.2.x
+
+`0.3.0` adds a guard that refuses RPC access to **system tables** —
+any sheet whose name starts with `_` (today: `_meta` and `_allowlist`).
+The backend matches this by rejecting the same calls with `unauthorized`
+(backend version `1.1.0`).
+
+**Client side:**
+
+1. Bump the dependency:
+   ```bash
+   npm install @UncleTalik/sheetsdb-client@^0.3.0
+   ```
+2. Search your codebase for `.table("_meta")` and `.table("_allowlist")`
+   (and any `_*` literals). Remove those calls — they now throw
+   `SheetsDBError({ code: "unauthorized" })` before any network round-trip.
+   The owner manages those sheets in the spreadsheet UI directly.
+3. No other API changes. Existing user-table calls (`expenses`, etc.)
+   work unchanged.
+
+**Backend side** (the spreadsheet/Apps Script owner): see
+[docs/setup.md → Upgrading the backend](https://github.com/UncleTalik/sheets-db/blob/main/docs/setup.md#upgrading-the-backend-100--110).
+
+**Compatibility matrix** during a partial rollout:
+
+| Client    | Backend   | `_*` op behaviour                |
+|-----------|-----------|----------------------------------|
+| `0.2.x`   | `1.0.0`   | Old: `select` succeeded (leaky)  |
+| `0.2.x`   | `1.1.0`   | Server returns `unauthorized`    |
+| `0.3.0`   | `1.0.0`   | Client short-circuits early      |
+| `0.3.0`   | `1.1.0`   | Client short-circuits early      |
+
+Either side can be upgraded first — old clients still work against the
+new backend (they just learn about the rejection over the wire instead
+of locally).
 
 ## Compatibility
 

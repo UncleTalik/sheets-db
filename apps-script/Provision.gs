@@ -52,6 +52,12 @@ function provision(spec, user) {
 
   if (spec.tables && typeof spec.tables === "object" && !Array.isArray(spec.tables)) {
     for (const tableName in spec.tables) {
+      if (isSystemTable(tableName)) {
+        throw appError(
+          "validation",
+          "tables." + tableName + " is reserved; names starting with \"_\" are not allowed"
+        );
+      }
       const columns = spec.tables[tableName];
       if (!Array.isArray(columns) || columns.length === 0) {
         throw appError("validation", "tables." + tableName + " must be a non-empty array of column specs");

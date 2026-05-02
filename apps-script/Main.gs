@@ -23,7 +23,7 @@ function doPost(e) {
 
 function doGet() {
   // Health check — useful when you paste the /exec URL into a browser.
-  return json({ ok: true, data: { service: "sheetsdb", version: "1.0.0" } });
+  return json({ ok: true, data: { service: "sheetsdb", version: "1.1.0" } });
 }
 
 function dispatch(op, user, req) {
@@ -33,21 +33,25 @@ function dispatch(op, user, req) {
 
     case "select":
       requireString(req.table, "table");
+      rejectSystemTable(req.table);
       return select(req.table, req.where || {});
 
     case "insert":
       requireString(req.table, "table");
+      rejectSystemTable(req.table);
       requireObject(req.row, "row");
       return withLock(() => insert(req.table, req.row, user));
 
     case "update":
       requireString(req.table, "table");
+      rejectSystemTable(req.table);
       requireString(req.id, "id");
       requireObject(req.row, "row");
       return withLock(() => update(req.table, req.id, req.row, user));
 
     case "delete":
       requireString(req.table, "table");
+      rejectSystemTable(req.table);
       requireString(req.id, "id");
       return withLock(() => remove(req.table, req.id, user));
 
@@ -84,6 +88,24 @@ function requireString(v, name) {
 }
 function requireObject(v, name) {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw appError("bad_request", name + " must be an object");
+}
+
+// System sheets (names starting with "_") are infrastructure — `_meta`,
+// `_allowlist`, and any future `_*` we add. The owner manages them through
+// the spreadsheet UI; the RPC surface refuses them outright.
+//
+// We coerce via String() so a caller can't bypass the check by sending a
+// JSON array like ["_meta"] — Sheets would coerce that back to "_meta"
+// when used as a sheet name. requireString already rejects non-strings
+// before this is reached in dispatch, but the coercion makes the helper
+// safe for any future caller.
+function isSystemTable(name) {
+  return String(name).charAt(0) === "_";
+}
+function rejectSystemTable(name) {
+  if (isSystemTable(name)) {
+    throw appError("unauthorized", "table " + name + " is reserved (system table)");
+  }
 }
 
 function withLock(fn) {
