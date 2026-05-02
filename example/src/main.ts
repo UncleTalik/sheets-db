@@ -1,4 +1,9 @@
-import { createClient, SheetsDBError } from "@UncleTalik/sheetsdb-client";
+import {
+  createClient,
+  SheetsDBError,
+  type Where,
+  type WhereOperators,
+} from "@UncleTalik/sheetsdb-client";
 import { EXPENSES_SCHEMA, type Expense } from "./types.js";
 
 const webAppUrl = import.meta.env.VITE_SHEETSDB_URL;
@@ -24,10 +29,14 @@ const userLabel = $<HTMLSpanElement>("#user");
 const signInBtn = $<HTMLButtonElement>("#sign-in");
 const signOutBtn = $<HTMLButtonElement>("#sign-out");
 const form = $<HTMLFormElement>("#add-form");
+const filterForm = $<HTMLFormElement>("#filter-form");
+const filterClearBtn = $<HTMLButtonElement>("#filter-clear");
 const list = $<HTMLUListElement>("#list");
 const errorBox = $<HTMLDivElement>("#error");
 const setupBox = $<HTMLDivElement>("#setup");
 const setupRunBtn = $<HTMLButtonElement>("#setup-run");
+
+let currentFilter: Where = {};
 
 function showError(message: string) {
   errorBox.textContent = message;
@@ -50,6 +59,7 @@ function setSignedOut() {
   signInBtn.hidden = false;
   signOutBtn.hidden = true;
   form.hidden = true;
+  filterForm.hidden = true;
   setupBox.hidden = true;
   list.innerHTML = "";
 }
@@ -57,12 +67,47 @@ function setSignedOut() {
 function showSetup() {
   setupBox.hidden = false;
   form.hidden = true;
+  filterForm.hidden = true;
   list.innerHTML = "";
 }
 
 function showReady() {
   setupBox.hidden = true;
   form.hidden = false;
+  filterForm.hidden = false;
+}
+
+function buildFilterFromForm(formEl: HTMLFormElement): Where {
+  const data = new FormData(formEl);
+  const get = (k: string) => String(data.get(k) ?? "").trim();
+  const csv = (k: string) =>
+    get(k).split(",").map((s) => s.trim()).filter(Boolean);
+
+  const where: Where = {};
+
+  const catOps: WhereOperators = {};
+  if (get("cat-eq")) catOps.eq = get("cat-eq");
+  if (get("cat-ne")) catOps.ne = get("cat-ne");
+  if (csv("cat-in").length) catOps.in = csv("cat-in");
+  if (csv("cat-nin").length) catOps.nin = csv("cat-nin");
+  if (Object.keys(catOps).length) where.category = catOps;
+
+  const amtOps: WhereOperators = {};
+  if (get("amt-gt")  !== "") amtOps.gt  = Number(get("amt-gt"));
+  if (get("amt-gte") !== "") amtOps.gte = Number(get("amt-gte"));
+  if (get("amt-lt")  !== "") amtOps.lt  = Number(get("amt-lt"));
+  if (get("amt-lte") !== "") amtOps.lte = Number(get("amt-lte"));
+  if (Object.keys(amtOps).length) where.amount = amtOps;
+
+  if (get("note-like")) where.note = { like: get("note-like") };
+
+  // Dates from <input type="date"> are YYYY-MM-DD; widen to a full UTC day.
+  const dateOps: WhereOperators = {};
+  if (get("date-from")) dateOps.gte = new Date(get("date-from") + "T00:00:00Z").toISOString();
+  if (get("date-to"))   dateOps.lte = new Date(get("date-to")   + "T23:59:59.999Z").toISOString();
+  if (Object.keys(dateOps).length) where.createdAt = dateOps;
+
+  return where;
 }
 
 function handleError(err: unknown) {
@@ -76,7 +121,7 @@ function handleError(err: unknown) {
 async function refresh() {
   clearError();
   try {
-    const rows = await expenses.select();
+    const rows = await expenses.where(currentFilter).select();
     showReady();
     rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     list.innerHTML = "";
@@ -185,4 +230,16 @@ form.addEventListener("submit", async (e) => {
   } catch (err) {
     handleError(err);
   }
+});
+
+filterForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  currentFilter = buildFilterFromForm(filterForm);
+  await refresh();
+});
+
+filterClearBtn.addEventListener("click", async () => {
+  filterForm.reset();
+  currentFilter = {};
+  await refresh();
 });

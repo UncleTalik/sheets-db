@@ -1,6 +1,22 @@
 export type Row = Record<string, unknown>;
 
-export type Where = Record<string, string | number | boolean>;
+export type WherePrimitive = string | number | boolean;
+
+export interface WhereOperators {
+  eq?: WherePrimitive;
+  ne?: WherePrimitive;
+  gt?: WherePrimitive;
+  gte?: WherePrimitive;
+  lt?: WherePrimitive;
+  lte?: WherePrimitive;
+  like?: string;
+  in?: WherePrimitive[];
+  nin?: WherePrimitive[];
+}
+
+export type WhereClause = WherePrimitive | WhereOperators;
+
+export type Where = Record<string, WhereClause>;
 
 export type ColumnType =
   | "string"
@@ -87,6 +103,11 @@ export interface ClientConfig {
 }
 
 export interface TableQuery<T = Row> {
+  /**
+   * Add an AND-merged filter clause. Same-field clauses replace each other —
+   * combine multiple operators on one field in a single call:
+   * `.where({ amount: { gt: 5, lte: 10 } })`.
+   */
   where(filter: Where): TableQuery<T>;
   select(): Promise<T[]>;
   selectOne(): Promise<T | null>;

@@ -29,6 +29,9 @@ export type {
   TableQuery,
   User,
   Where,
+  WhereClause,
+  WhereOperators,
+  WherePrimitive,
 } from "./types.js";
 
 export function createClient(config: ClientConfig): SheetsDB {

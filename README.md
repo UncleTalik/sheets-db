@@ -17,7 +17,7 @@ schema, and no servers to manage.
 |---|---|
 | Family apps, internal tools, side projects | Public-facing apps with thousands of users |
 | ≤ a few hundred ops/day | High write throughput (the Sheets API is slow) |
-| Simple equality filters, lookup by id | Complex joins, aggregates, transactions |
+| Filter by equality, range, `like`, `in` | Complex joins, aggregates, transactions |
 | You want your data in a spreadsheet you can open | You need strict schema migrations or replication |
 
 Rough performance ceiling: ~500ms-1s per request (Sheets API latency). Plan
@@ -227,7 +227,7 @@ interface Expense {
 }
 
 const list = await db.table<Expense>("expenses")
-  .where({ category: "groceries" })
+  .where({ category: "groceries", amount: { gte: 5, lte: 50 } })
   .select();
 
 const created = await db.table<Expense>("expenses").insert({

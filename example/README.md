@@ -59,11 +59,30 @@ also runs `demoSystemTableGuard()` and logs the rejection to the
 console — handy as a regression smoke test when bumping the client or
 backend.
 
+## Filtering
+
+The filter panel demos every operator the new `Where` type supports.
+Inputs combine into a single per-field operator object so multiple
+constraints on one field (e.g. an amount range) compose cleanly:
+
+| Operator | Input |
+|---|---|
+| `eq`  | Category equals |
+| `ne`  | Not category |
+| `in`  | Category in (comma) |
+| `nin` | Exclude categories (comma) |
+| `gt` / `gte` / `lt` / `lte` | Amount &gt; / ≥ / &lt; / ≤ |
+| `like` | Note like (use `%` and `_` wildcards) |
+| `gte` + `lte` (datetime) | Created from / Created to |
+
+See `client/src/types.ts` for the full `Where` / `WhereOperators` shape.
+
 ## What this exercises
 
 - `signIn()` — Google Identity Services popup.
 - `db.provision(...)` — declarative first-run table creation.
 - `db.table<Expense>("expenses").select()` — read with type narrowing.
+- `db.table<Expense>("expenses").where({ amount: { gte: 5, lte: 50 } }).select()` — operator-rich filtering.
 - `db.table<Expense>("expenses").insert(...)` — write with validation + defaults.
 - `db.table<Expense>("expenses").delete(id)` — delete.
 - Error display — `SheetsDBError.code` and `details` surface the backend
