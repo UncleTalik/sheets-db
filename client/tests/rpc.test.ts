@@ -127,21 +127,49 @@ describe("rpc", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it("rejects arrays that coerce to a leading-underscore string", async () => {
-      // A caller bypassing the TS type with ["_meta"] would otherwise be
-      // resolved by Google Sheets as "_meta". Defense-in-depth.
-      const fetchMock = vi.fn();
-      globalThis.fetch = fetchMock as unknown as typeof fetch;
-      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+    it.each([
+      { label: "single-element array", value: ["_meta"] },
+      { label: "object with custom toString", value: { toString: () => "_evil" } },
+    ])(
+      "rejects $label that coerces to a leading-underscore string",
+      async ({ value }) => {
+        // A caller bypassing the TS type would otherwise be resolved by
+        // Google Sheets via String() coercion (e.g. ["_meta"] → "_meta").
+        const fetchMock = vi.fn();
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        const rpc = createRpc(WEB_APP_URL, () => TOKEN);
 
-      await expect(
-        rpc.call({ op: "select", table: ["_meta"] as unknown as string }),
-      ).rejects.toMatchObject({
-        name: "SheetsDBError",
-        code: "unauthorized",
-      });
-      expect(fetchMock).not.toHaveBeenCalled();
-    });
+        await expect(
+          rpc.call({ op: "select", table: value as unknown as string }),
+        ).rejects.toMatchObject({
+          name: "SheetsDBError",
+          code: "unauthorized",
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      { label: "number", value: 42 },
+      { label: "boolean", value: true },
+      { label: "null", value: null },
+      { label: "object without leading-underscore toString", value: {} },
+    ])(
+      "lets $label through to the server (server is the boundary)",
+      async ({ value }) => {
+        // Inputs whose String() coercion does NOT start with "_" pass the
+        // client guard. The server's requireString then rejects them with
+        // bad_request — no system sheet is ever resolved.
+        const fetchMock = mockFetchJson({ ok: false, error: "bad_request" });
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+        await expect(
+          rpc.call({ op: "select", table: value as unknown as string }),
+        ).rejects.toMatchObject({ code: "bad_request" });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      },
+    );
   });
 
   it("provision sends op=provision with spec at top level (not in row)", async () => {
