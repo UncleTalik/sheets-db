@@ -129,7 +129,7 @@ describe("rpc", () => {
 
     it.each([
       { label: "single-element array", value: ["_meta"] },
-      { label: "object with custom toString", value: { toString: () => "_evil" } },
+      { label: "object with custom toString", value: { toString: (): string => "_evil" } },
     ])(
       "rejects $label that coerces to a leading-underscore string",
       async ({ value }) => {
