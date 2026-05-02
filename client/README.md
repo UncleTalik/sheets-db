@@ -13,7 +13,9 @@ const db = createClient({
 });
 
 await db.signIn();
-const rows = await db.table("expenses").where({ category: "groceries" }).select();
+const rows = await db.table("expenses")
+  .where({ category: "groceries", amount: { gte: 5, lte: 50 } })
+  .select();
 ```
 
 ## Install
@@ -98,11 +100,58 @@ interface TableQuery<T> {
   delete(id: string): Promise<{ id: string }>;
 }
 
-type Where = Record<string, string | number | boolean>;
+type WherePrimitive = string | number | boolean;
+
+interface WhereOperators {
+  eq?:  WherePrimitive;
+  ne?:  WherePrimitive;
+  gt?:  WherePrimitive;
+  gte?: WherePrimitive;
+  lt?:  WherePrimitive;
+  lte?: WherePrimitive;
+  like?: string;             // % matches any sequence, _ matches one char
+  in?:  WherePrimitive[];
+  nin?: WherePrimitive[];
+}
+
+type Where = Record<string, WherePrimitive | WhereOperators>;
 ```
 
-Filters in `.where()` are equality-only and ANDed together. For anything
-beyond equality, `select()` and filter in-memory.
+Each field in `where` is either a primitive (equality shorthand) or an
+operator object. Multiple operators on one field combine with AND; multiple
+fields combine with AND. Comparisons are type-aware — `number` columns use
+numeric ordering, `datetime` columns use ISO-string ordering (chronological
+because storage is `.toISOString()`), everything else is lexicographic.
+
+```ts
+// equality shorthand (same as { eq: "groceries" })
+await db.table("expenses").where({ category: "groceries" }).select();
+
+// range
+await db.table("expenses").where({ amount: { gte: 5, lte: 50 } }).select();
+
+// like (use % and _ wildcards; bounded to 256 chars / 8 wildcards)
+await db.table("expenses").where({ note: { like: "%coffee%" } }).select();
+
+// in / nin
+await db.table("expenses").where({ category: { in: ["groceries", "gas"] } }).select();
+await db.table("expenses").where({ category: { nin: ["rent"] } }).select();
+```
+
+Chained `.where()` calls AND across fields and **replace** clauses on the
+same field — combine multiple operators on one field in a single call:
+
+```ts
+// drops { gt: 5 }; only { lt: 10 } survives
+await db.table("expenses").where({ amount: { gt: 5 } }).where({ amount: { lt: 10 } }).select();
+
+// correct
+await db.table("expenses").where({ amount: { gt: 5, lt: 10 } }).select();
+```
+
+The backend reads the entire sheet and filters in JavaScript — performance
+is bounded by row count, not by selectivity. Keep tables small or filter
+further in memory.
 
 ## `provision` — declarative schema setup
 
@@ -218,6 +267,49 @@ after a page reload. This is intentional: it keeps the attack surface small.
 This package has no runtime dependencies. It uses the built-in `fetch` API and
 loads Google Identity Services from `https://accounts.google.com/gsi/client` at
 runtime (via the script tag you include in your HTML).
+
+## Migration: upgrading from 0.3.x
+
+`0.4.0` widens the `Where` type to accept operator clauses
+(`eq`/`ne`/`gt`/`gte`/`lt`/`lte`/`like`/`in`/`nin`) alongside the existing
+primitive-equality shorthand. The matching backend version is `1.2.0`.
+
+**Client side:**
+
+1. Bump the dependency:
+   ```bash
+   npm install @UncleTalik/sheetsdb-client@^0.4.0
+   ```
+2. No code changes required. Existing `.where({ category: "groceries" })`
+   calls keep working as equality shorthand.
+3. Optionally adopt operator clauses where in-memory filtering used to be
+   needed:
+   ```ts
+   // before: select all then filter
+   const rows = await db.table("expenses").select();
+   const big = rows.filter(r => r.amount >= 50);
+
+   // after
+   const big = await db.table("expenses").where({ amount: { gte: 50 } }).select();
+   ```
+
+**Wire format is unchanged** — operator clauses are nested objects on the
+existing `where` field. A new client talks to a `1.1.0` backend just fine
+**as long as you stick to primitive shorthand**. Operator clauses only
+work against `1.2.0+`; older backends will fall back to comparing the
+serialized object via `String(...)` and silently match nothing.
+
+**Compatibility matrix:**
+
+| Client    | Backend   | Operator clauses             | Primitive shorthand          |
+|-----------|-----------|------------------------------|------------------------------|
+| `0.3.x`   | `1.1.0`   | n/a                          | works                        |
+| `0.3.x`   | `1.2.0`   | n/a                          | works                        |
+| `0.4.0`   | `1.1.0`   | silently match nothing       | works                        |
+| `0.4.0`   | `1.2.0`   | works                        | works                        |
+
+**Backend side** (the spreadsheet/Apps Script owner): see
+[docs/setup.md → Upgrading the backend](https://github.com/UncleTalik/sheets-db/blob/main/docs/setup.md#upgrading-the-backend-110--120).
 
 ## Migration: upgrading from 0.2.x
 

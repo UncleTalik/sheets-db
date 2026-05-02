@@ -135,6 +135,27 @@ upgrading the npm package is recommended but not required. See the
 ["Migration: upgrading from 0.2.x"](../client/README.md#migration-upgrading-from-02x)
 section in the client README for the consumer-side steps.
 
+### Upgrading the backend (1.1.0 → 1.2.0)
+
+Version 1.2.0 teaches `select` to interpret operator clauses
+(`eq`/`ne`/`gt`/`gte`/`lt`/`lte`/`like`/`in`/`nin`) inside the existing
+`where` field. The wire format is unchanged — operator clauses are nested
+objects on the same `where` body. To roll out:
+
+1. In the Apps Script editor, replace the contents of `Table.gs` and
+   `Test.gs` with the latest from
+   [`apps-script/`](../apps-script). No manifest or scope change.
+2. **Deploy → Manage deployments → ✎ → Version: New version → Deploy.**
+   Editing keeps the `/exec` URL stable.
+3. Hit `GET /exec` in a browser — the health-check JSON should now
+   report `"version": "1.2.0"`.
+
+Old clients (`0.3.x` and earlier) still work — they only emit primitive
+`where` clauses, which the new backend continues to honor. Upgrading the
+npm package to `0.4.0+` unlocks the new operator vocabulary; see
+["Migration: upgrading from 0.3.x"](../client/README.md#migration-upgrading-from-03x)
+in the client README.
+
 ### "Who has access" — the Anyone vs. Anyone-with-Google trap
 
 This is the most common setup failure. The dropdown has three values and

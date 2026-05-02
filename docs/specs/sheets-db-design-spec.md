@@ -137,7 +137,13 @@ Operations:
 | `update` | `table`, `id`, `row`    | updated row                      |
 | `delete` | `table`, `id`           | `{ id }`                         |
 
-`where` is an object of equality filters ANDed together. No `$gt`/`$lt`/`$or` in v1 — keep it simple; clients can filter further in memory.
+`where` is an object of per-field clauses ANDed together. Each field's value is
+either a primitive (equality shorthand) or an operator object selecting from
+`eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `in`, `nin`. Multiple operators on
+the same field combine with AND. Backend `1.2.0+` (client `0.4.0+`) is required
+for operator clauses; older versions only understand the primitive shorthand.
+There is no `$or` and no JOIN — for either, select more rows and combine in
+memory.
 
 ### Access control layers
 
@@ -1043,7 +1049,7 @@ sheetsdb/
 
 - Should reads be cached client-side with a TTL? (Sheets API is slow-ish — 500ms-1s per call.)
 - Add a `batch` op that accepts an array of operations and runs them under a single lock.
-- Add `where` operators beyond equality (`$gt`, `$in`, `$contains`).
+- ~~Add `where` operators beyond equality (`$gt`, `$in`, `$contains`).~~ Done in `1.2.0` / client `0.4.0` (`gt`/`gte`/`lt`/`lte`/`ne`/`like`/`in`/`nin`).
 - Optional server-side computed columns (e.g., `total = quantity * price`).
 - Migrate the allowlist check to also accept Google Groups (so you add family members once to a group instead of editing the sheet).
 

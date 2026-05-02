@@ -23,7 +23,7 @@ function doPost(e) {
 
 function doGet() {
   // Health check — useful when you paste the /exec URL into a browser.
-  return json({ ok: true, data: { service: "sheetsdb", version: "1.1.0" } });
+  return json({ ok: true, data: { service: "sheetsdb", version: "1.2.0" } });
 }
 
 function dispatch(op, user, req) {
