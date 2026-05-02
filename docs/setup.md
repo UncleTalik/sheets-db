@@ -111,6 +111,30 @@ deployment) keeps the `/exec` URL stable.
 If you ever create a *new* deployment (vs. editing the existing one), the
 URL changes and every consumer has to be updated.
 
+### Upgrading the backend (1.0.0 → 1.1.0)
+
+Version 1.1.0 adds a server-side guard that blocks the RPC API from
+reaching system sheets (`_meta`, `_allowlist`, any `_*` name). To roll
+the upgrade out:
+
+1. In the Apps Script editor, replace the contents of `Main.gs` and
+   `Provision.gs` with the latest from
+   [`apps-script/`](../apps-script).
+2. **Deploy → Manage deployments → ✎ → Version: New version → Deploy.**
+   Editing keeps the `/exec` URL stable — don't create a new
+   deployment.
+3. No spreadsheet data changes. `_meta` and `_allowlist` are unchanged
+   on disk; only the API layer is restricted.
+4. Hit `GET /exec` in a browser — the health-check JSON should now
+   report `"version": "1.1.0"`.
+
+After redeploy, any client (old or new) that calls
+`select`/`insert`/`update`/`delete` against a `_*` table receives
+`unauthorized`. Old `0.2.x` clients still work for normal tables —
+upgrading the npm package is recommended but not required. See the
+["Migration: upgrading from 0.2.x"](../client/README.md#migration-upgrading-from-02x)
+section in the client README for the consumer-side steps.
+
 ### "Who has access" — the Anyone vs. Anyone-with-Google trap
 
 This is the most common setup failure. The dropdown has three values and
@@ -150,6 +174,12 @@ dropdown, click **Run ▶**, check the execution log.
   first, or create the sheet manually).
 
 ## Troubleshooting
+
+**`unauthorized: table _meta is reserved (system table)`** (or
+`_allowlist`, or any `_*` name) — expected. SheetsDB blocks the RPC
+API from reaching system sheets entirely. Manage `_meta` and
+`_allowlist` in the spreadsheet UI directly. See ["System
+tables"](../README.md#system-tables) in the root README.
 
 **`unauthorized: missing idToken`** — your frontend didn't call `db.signIn()`
 before making a request, or the token was cleared (reload → must sign in

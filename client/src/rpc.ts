@@ -35,6 +35,16 @@ export function createRpc(
         );
       }
 
+      // System sheets (`_meta`, `_allowlist`, any future `_*`) are managed
+      // by the owner via the spreadsheet UI; the backend rejects them too.
+      // Short-circuiting here saves a round-trip and gives a clearer stack.
+      if (typeof opts.table === "string" && opts.table.startsWith("_")) {
+        throw new SheetsDBError(
+          "unauthorized",
+          `table ${opts.table} is reserved (system table)`,
+        );
+      }
+
       const body: RpcRequest = { idToken, ...opts };
 
       let res: Response;

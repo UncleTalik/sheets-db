@@ -258,6 +258,22 @@ try {
 Error codes: `unauthorized`, `validation`, `not_found`, `bad_request`,
 `busy`, `misconfigured`, `internal`.
 
+## System tables
+
+Sheet names that start with `_` are reserved for SheetsDB's own
+infrastructure — currently `_meta` (schema registry) and `_allowlist`
+(per-user access). These are **not reachable through the RPC API**:
+`select`, `insert`, `update`, and `delete` against any `_*` table return
+`unauthorized` for every caller, including the owner. Manage them in
+the spreadsheet UI directly. `provision` (owner-only) is the one
+documented exception — it writes `_meta` and `_allowlist` as part of
+declarative setup, and rejects user-supplied `spec.tables` keys that
+start with `_`.
+
+The leading-underscore rule is forward-compatible: any future system
+table (e.g. `_audit`, `_settings`) is auto-protected — don't name your
+own tables with a leading underscore.
+
 ---
 
 ## Going deeper

@@ -65,6 +65,13 @@ Applied only when the incoming value is `undefined`, `null`, or `""`:
 Make sure every table has an `id` column of type `string` with `unique: TRUE`
 and `default: auto`. `update` and `delete` rely on `id`.
 
+> **Reserved names.** Sheet names starting with `_` are reserved for
+> SheetsDB system tables (`_meta`, `_allowlist`, and any future ones).
+> The RPC API rejects `select`/`insert`/`update`/`delete` against `_*`
+> tables with `unauthorized`, and `provision` rejects `_*` keys in
+> `spec.tables` with `validation`. Don't name user tables with a
+> leading underscore.
+
 ## Invariants the backend assumes
 
 - Column order in the data sheet header matches the order of columns you want

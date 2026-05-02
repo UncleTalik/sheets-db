@@ -91,6 +91,43 @@ describe("rpc", () => {
     });
   });
 
+  describe("system table guard", () => {
+    it("rejects select against _meta without calling fetch", async () => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await expect(rpc.call({ op: "select", table: "_meta" })).rejects.toMatchObject({
+        name: "SheetsDBError",
+        code: "unauthorized",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects insert against _allowlist without calling fetch", async () => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await expect(
+        rpc.call({ op: "insert", table: "_allowlist", row: { email: "x@y.z" } }),
+      ).rejects.toMatchObject({
+        name: "SheetsDBError",
+        code: "unauthorized",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("still calls fetch for normal user tables", async () => {
+      const fetchMock = mockFetchJson({ ok: true, data: [] });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await rpc.call({ op: "select", table: "expenses" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("provision sends op=provision with spec at top level (not in row)", async () => {
     const result = {
       tablesCreated: ["expenses"],
