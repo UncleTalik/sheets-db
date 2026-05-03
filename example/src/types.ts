@@ -29,6 +29,10 @@ export interface Note {
   _userIdentifier: string;
 }
 
+// Shape clients construct. The server-managed columns (`id`, `createdAt`,
+// `_userIdentifier`) are filled in by defaults / magic-column stamping.
+export type NoteInput = Pick<Note, "title"> & Partial<Pick<Note, "body">>;
+
 export const NOTES_SCHEMA: ColumnSpec[] = [
   { column: "id",              type: "string",   required: true, unique: true, default: "auto" },
   { column: "createdAt",       type: "datetime", required: true, default: "now" },

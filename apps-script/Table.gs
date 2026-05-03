@@ -156,6 +156,28 @@ function findRowIndexById(sheet, id) {
   return pos < 0 ? -1 : pos + 2; // +2: header row + 1-indexed
 }
 
+function isRowScoped_(header) {
+  return header.indexOf(MAGIC_COL_USER_ID_) >= 0;
+}
+
+// Resolve and normalize the caller's identity for a row-scoped op. Throws
+// `unauthorized` if the caller is missing — defense-in-depth against future
+// callers that forget to thread `user` through.
+function callerEmail_(user) {
+  if (!user || !user.email) {
+    throw appError("unauthorized", "row-scoped table requires an authenticated user");
+  }
+  return normalizeEmail_(user.email);
+}
+
+// Mismatch returns `not_found` (not `unauthorized`) so callers can't
+// enumerate which IDs exist across owners.
+function assertRowOwnership_(row, callerEmail, id) {
+  if (normalizeEmail_(row[MAGIC_COL_USER_ID_]) !== callerEmail) {
+    throw appError("not_found", "no row with id=" + id);
+  }
+}
+
 function select(table, where, user) {
   const sheet = getSheet(table);
   const last = sheet.getLastRow();
@@ -165,16 +187,10 @@ function select(table, where, user) {
   const typeOf = {};
   tableSchema(table).forEach(c => { typeOf[c.column] = c.type; });
 
-  // Row-scoped table: clamp the query to the caller's rows. Replaces any
-  // client-supplied clause on this field (operator-shape included) since
-  // Object.assign overwrites the whole field entry.
-  if (typeOf["_userIdentifier"]) {
-    if (!user || !user.email) {
-      throw appError("unauthorized", "row-scoped table requires an authenticated user");
-    }
-    where = Object.assign({}, where, {
-      _userIdentifier: String(user.email).trim().toLowerCase()
-    });
+  if (typeOf[MAGIC_COL_USER_ID_]) {
+    // Object.assign overwrites the whole field entry, so this beats any
+    // client-supplied value, including operator-shape ones like {in:[...]}.
+    where = Object.assign({}, where, { [MAGIC_COL_USER_ID_]: callerEmail_(user) });
   }
 
   const matcher = buildMatcher_(where || {}, typeOf);
@@ -189,13 +205,7 @@ function select(table, where, user) {
 function insert(table, row, user) {
   const sheet = getSheet(table);
   const header = getHeader(sheet);
-  // Defense-in-depth: clients can't seed the magic owner column. validateRow
-  // would overwrite it on insert anyway, but stripping early avoids any
-  // chance of a downstream code path observing the spoofed value.
-  if (header.indexOf("_userIdentifier") >= 0 && row &&
-      Object.prototype.hasOwnProperty.call(row, "_userIdentifier")) {
-    delete row._userIdentifier;
-  }
+  if (isRowScoped_(header) && row) delete row[MAGIC_COL_USER_ID_];
   const clean = validateRow(table, row, { user: user, isInsert: true });
   sheet.appendRow(header.map(col => toCell(clean[col])));
   return clean;
@@ -209,18 +219,9 @@ function update(table, id, patch, user) {
   const header = getHeader(sheet);
   const current = rowToObj(header, sheet.getRange(rowIdx, 1, 1, header.length).getValues()[0]);
 
-  // Row-scoped table: gate by ownership and prevent owner-rewrite via patch.
-  // Mismatch returns the same `not_found` shape as a missing row to avoid
-  // leaking which IDs exist across owners.
-  if (header.indexOf("_userIdentifier") >= 0) {
-    if (!user || !user.email) {
-      throw appError("unauthorized", "row-scoped table requires an authenticated user");
-    }
-    if (String(current._userIdentifier).toLowerCase() !==
-        String(user.email).toLowerCase()) {
-      throw appError("not_found", "no row with id=" + id);
-    }
-    if (patch) delete patch._userIdentifier;
+  if (isRowScoped_(header)) {
+    assertRowOwnership_(current, callerEmail_(user), id);
+    delete patch[MAGIC_COL_USER_ID_];
   }
 
   // Merge, then validate the full row. Force id; refresh updatedAt if the schema has it.
@@ -237,15 +238,9 @@ function remove(table, id, user) {
   const rowIdx = findRowIndexById(sheet, id);
   if (rowIdx < 0) throw appError("not_found", "no row with id=" + id);
   const header = getHeader(sheet);
-  if (header.indexOf("_userIdentifier") >= 0) {
-    if (!user || !user.email) {
-      throw appError("unauthorized", "row-scoped table requires an authenticated user");
-    }
+  if (isRowScoped_(header)) {
     const current = rowToObj(header, sheet.getRange(rowIdx, 1, 1, header.length).getValues()[0]);
-    if (String(current._userIdentifier).toLowerCase() !==
-        String(user.email).toLowerCase()) {
-      throw appError("not_found", "no row with id=" + id);
-    }
+    assertRowOwnership_(current, callerEmail_(user), id);
   }
   sheet.deleteRow(rowIdx);
   return { id };

@@ -2,6 +2,11 @@
 // so this is only deduped within a single dispatch.
 let _schemaCache = null;
 
+// Magic column name. A table that includes a column literally named this
+// becomes row-scoped: the server stamps it on insert and gates every read
+// and mutation by a case-insensitive match against the caller's email.
+const MAGIC_COL_USER_ID_ = "_userIdentifier";
+
 /**
  * Returns { tableName: [ { column, type, required, unique, default }, ... ] }
  */
@@ -66,15 +71,10 @@ function validateRow(table, row, { existingId = null, user = null, isInsert = fa
       }
     }
 
-    // Magic column: server stamps row owner on insert; normalizes case otherwise.
-    // Caller-supplied values are ignored on insert. On update, the merged row
-    // already carries the existing value (the `update` op strips the patch).
-    if (col.column === "_userIdentifier") {
-      if (isInsert && user && user.email) {
-        v = String(user.email).trim().toLowerCase();
-      } else if (v !== undefined && v !== null && v !== "") {
-        v = String(v).trim().toLowerCase();
-      }
+    // Magic column: server stamps the row owner on insert. Comparisons
+    // elsewhere are case-insensitive, so no normalization needed on update.
+    if (col.column === MAGIC_COL_USER_ID_ && isInsert && user && user.email) {
+      v = normalizeEmail_(user.email);
     }
 
     // Required check

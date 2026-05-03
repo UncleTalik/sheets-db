@@ -9,6 +9,7 @@ import {
   NOTES_SCHEMA,
   type Expense,
   type Note,
+  type NoteInput,
 } from "./types.js";
 
 const webAppUrl = import.meta.env.VITE_SHEETSDB_URL;
@@ -134,6 +135,11 @@ function handleError(err: unknown) {
 
 async function refresh() {
   clearError();
+  // Kick off notes in parallel — independent of the expenses select, so
+  // there's no reason to make the user wait for two sequential round-trips.
+  // refreshNotes has its own error handling; await it after expenses render
+  // so a notes failure doesn't mask an expenses error.
+  const notesP = refreshNotes();
   try {
     const rows = await expenses.where(currentFilter).select();
     showReady();
@@ -162,7 +168,7 @@ async function refresh() {
       li.append(amount, category, del);
       list.appendChild(li);
     }
-    await refreshNotes();
+    await notesP;
   } catch (err) {
     if (err instanceof SheetsDBError && err.code === "not_found") {
       showSetup();
@@ -308,13 +314,10 @@ notesAddForm.addEventListener("submit", async (e) => {
   const title = String(data.get("title") ?? "").trim();
   const body = String(data.get("body") ?? "").trim();
   if (!title) return;
+  // Server stamps `_userIdentifier` from the verified caller — clients omit it.
+  const input: NoteInput = body ? { title, body } : { title };
   try {
-    // Don't pass _userIdentifier — the server stamps it from the caller's
-    // verified email. Any value supplied here would be ignored anyway.
-    await notes.insert({
-      title,
-      ...(body ? { body } : {}),
-    } as Partial<Note>);
+    await notes.insert(input);
     notesAddForm.reset();
     await refreshNotes();
   } catch (err) {

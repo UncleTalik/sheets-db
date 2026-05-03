@@ -53,7 +53,13 @@ function isAllowed(email) {
   if (last < 2) return false;
   const emails = sheet.getRange(2, 1, last - 1, 1).getValues()
     .flat()
-    .map(s => String(s).trim().toLowerCase())
+    .map(normalizeEmail_)
     .filter(Boolean);
-  return emails.indexOf(String(email).trim().toLowerCase()) >= 0;
+  return emails.indexOf(normalizeEmail_(email)) >= 0;
+}
+
+// Canonical form for any email used as an identity key — auth, allowlist
+// membership, and `_userIdentifier` row scoping all compare on this shape.
+function normalizeEmail_(email) {
+  return String(email == null ? "" : email).trim().toLowerCase();
 }
