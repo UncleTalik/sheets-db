@@ -212,17 +212,16 @@ function select(table, where, user) {
       where = Object.assign({}, where);
       delete where[MAGIC_COL_SHARED_WITH_];
     }
-    // Owner-scope clamp on _userIdentifier was the v1 mechanism; under v2 it
-    // would conflict with the shared-row branch, so we drop that override and
-    // rely on userPredicate. Client predicates on _userIdentifier still apply.
   }
 
   const matcher = buildMatcher_(where || {}, typeOf);
   const out = [];
   for (let i = 0; i < values.length; i++) {
     const obj = rowToObj(header, values[i]);
-    if (userPredicate && !userPredicate(obj)) continue;
+    // Cheap matcher first; userPredicate parses the _sharedWith JSON per row,
+    // so it's strictly more expensive — let the matcher reject early.
     if (!matcher(obj)) continue;
+    if (userPredicate && !userPredicate(obj)) continue;
     out.push(obj);
   }
   return out;
@@ -285,7 +284,6 @@ function update(table, id, patch, user, opts) {
   const merged = Object.assign({}, current, patch, { id });
   if (header.indexOf("updatedAt") >= 0) merged.updatedAt = new Date().toISOString();
 
-  // Owner-only: apply share-list mutations on top of the merged row.
   if (isOwner && header.indexOf(MAGIC_COL_SHARED_WITH_) >= 0 && opts) {
     let shares = parseShares_(merged[MAGIC_COL_SHARED_WITH_]);
     if (opts.unshareWith) {
@@ -345,7 +343,10 @@ function requireSharingTable_(header) {
   }
 }
 
-function share(table, id, email, perm, user) {
+// Owner-only mutation scaffolding for sharing-capable tables. Loads the row,
+// asserts ownership, runs `mutate(current, header)` in-place, bumps
+// `updatedAt` if the schema has it, writes back, returns the updated row.
+function mutateOwnedRow_(table, id, user, mutate) {
   const sheet = getSheet(table);
   const header = getHeader(sheet);
   requireSharingTable_(header);
@@ -353,14 +354,7 @@ function share(table, id, email, perm, user) {
   if (rowIdx < 0) throw appError("not_found", "no row with id=" + id);
   const current = readRowAt_(sheet, rowIdx, header);
   assertRowOwnership_(current, callerEmail_(user), id);
-
-  const entry = validateShareEntry_({ email: email, perm: perm },
-                                    current[MAGIC_COL_USER_ID_]);
-  let shares = parseShares_(current[MAGIC_COL_SHARED_WITH_]);
-  const idx = findShareIndex_(shares, entry.email);
-  if (idx >= 0) shares[idx] = entry; else shares.push(entry);
-
-  current[MAGIC_COL_SHARED_WITH_] = serializeShares_(shares);
+  mutate(current, header);
   if (header.indexOf("updatedAt") >= 0) {
     current.updatedAt = new Date().toISOString();
   }
@@ -368,26 +362,26 @@ function share(table, id, email, perm, user) {
   return current;
 }
 
-function unshare(table, id, email, user) {
-  const sheet = getSheet(table);
-  const header = getHeader(sheet);
-  requireSharingTable_(header);
-  const rowIdx = findRowIndexById(sheet, id);
-  if (rowIdx < 0) throw appError("not_found", "no row with id=" + id);
-  const current = readRowAt_(sheet, rowIdx, header);
-  assertRowOwnership_(current, callerEmail_(user), id);
+function share(table, id, email, perm, user) {
+  return mutateOwnedRow_(table, id, user, function (current) {
+    const entry = validateShareEntry_({ email: email, perm: perm },
+                                      current[MAGIC_COL_USER_ID_]);
+    const shares = parseShares_(current[MAGIC_COL_SHARED_WITH_]);
+    const idx = findShareIndex_(shares, entry.email);
+    if (idx >= 0) shares[idx] = entry; else shares.push(entry);
+    current[MAGIC_COL_SHARED_WITH_] = serializeShares_(shares);
+  });
+}
 
+function unshare(table, id, email, user) {
+  // Validate before the lock + sheet load — empty email is always wrong.
   const norm = normalizeEmail_(email);
   if (!norm) throw appError("validation", "email required");
-  const shares = parseShares_(current[MAGIC_COL_SHARED_WITH_])
-    .filter(s => normalizeEmail_(s.email) !== norm);
-
-  current[MAGIC_COL_SHARED_WITH_] = serializeShares_(shares);
-  if (header.indexOf("updatedAt") >= 0) {
-    current.updatedAt = new Date().toISOString();
-  }
-  writeRowAt_(sheet, rowIdx, header, current);
-  return current;
+  return mutateOwnedRow_(table, id, user, function (current) {
+    const shares = parseShares_(current[MAGIC_COL_SHARED_WITH_])
+      .filter(s => normalizeEmail_(s.email) !== norm);
+    current[MAGIC_COL_SHARED_WITH_] = serializeShares_(shares);
+  });
 }
 
 function toCell(v) {

@@ -195,6 +195,15 @@ function lower(s: string | undefined): string {
   return String(s ?? "").trim().toLowerCase();
 }
 
+const ALL_PERMS: Permission[] = ["READ", "WRITE", "WRITE_DELETE"];
+
+// Validate untrusted form input before handing it to the typed client API.
+// The server rejects bad values with `validation` regardless, but rejecting
+// up front avoids a wasted round-trip and surfaces a clean default in the UI.
+function asPermission(s: unknown): Permission {
+  return ALL_PERMS.includes(s as Permission) ? (s as Permission) : "READ";
+}
+
 async function refreshNotes() {
   try {
     const rows = await notes.select();
@@ -330,7 +339,7 @@ function buildShareForm(noteId: string): HTMLFormElement {
     e.preventDefault();
     const email = emailInput.value.trim();
     if (!email) return;
-    const perm = permSelect.value as Permission;
+    const perm = asPermission(permSelect.value);
     try {
       await notes.share(noteId, email, perm);
       await refreshNotes();
@@ -441,7 +450,7 @@ notesAddForm.addEventListener("submit", async (e) => {
   const input: NoteInput = body ? { title, body } : { title };
   // Optional inline shareWith — saves a follow-up `.share()` round-trip.
   const shareEmail = String(data.get("share-email") ?? "").trim();
-  const sharePerm = String(data.get("share-perm") ?? "READ") as Permission;
+  const sharePerm = asPermission(data.get("share-perm"));
   const opts = shareEmail
     ? { shareWith: [{ email: shareEmail, perm: sharePerm }] }
     : undefined;

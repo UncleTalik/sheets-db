@@ -79,6 +79,10 @@ export type Op =
  * The owner has all rights implicitly + share-list management. Only the
  * owner may modify the share list; WRITE / WRITE_DELETE collaborators
  * supplying `shareWith` / `unshareWith` get an `unauthorized` error.
+ *
+ * Wire-format note: these string values must match the server's
+ * `PERM_VALUES_` allowlist in `apps-script/Schema.gs` exactly. Unknown
+ * values are rejected server-side with a `validation` error.
  */
 export type Permission = "READ" | "WRITE" | "WRITE_DELETE";
 
@@ -159,6 +163,11 @@ export interface TableQuery<T = Row> {
    * beyond your accessible rows.
    */
   where(filter: Where): TableQuery<T>;
+  /**
+   * Run the query. On a row-scoped table with `_sharedWith`, visibility is
+   * disjunctive: a row appears if you own it OR you're listed in its
+   * share list. Filters from `.where(...)` then narrow that visible set.
+   */
   select(): Promise<T[]>;
   selectOne(): Promise<T | null>;
   /**
