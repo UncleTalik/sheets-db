@@ -23,7 +23,7 @@ function doPost(e) {
 
 function doGet() {
   // Health check — useful when you paste the /exec URL into a browser.
-  return json({ ok: true, data: { service: "sheetsdb", version: "1.3.0" } });
+  return json({ ok: true, data: { service: "sheetsdb", version: "1.4.0" } });
 }
 
 function dispatch(op, user, req) {
@@ -40,20 +40,40 @@ function dispatch(op, user, req) {
       requireString(req.table, "table");
       rejectSystemTable(req.table);
       requireObject(req.row, "row");
-      return withLock(() => insert(req.table, req.row, user));
+      return withLock(() => insert(req.table, req.row, user, {
+        shareWith: req.shareWith
+      }));
 
     case "update":
       requireString(req.table, "table");
       rejectSystemTable(req.table);
       requireString(req.id, "id");
       requireObject(req.row, "row");
-      return withLock(() => update(req.table, req.id, req.row, user));
+      return withLock(() => update(req.table, req.id, req.row, user, {
+        shareWith: req.shareWith,
+        unshareWith: req.unshareWith
+      }));
 
     case "delete":
       requireString(req.table, "table");
       rejectSystemTable(req.table);
       requireString(req.id, "id");
       return withLock(() => remove(req.table, req.id, user));
+
+    case "share":
+      requireString(req.table, "table");
+      rejectSystemTable(req.table);
+      requireString(req.id, "id");
+      requireString(req.email, "email");
+      requireString(req.perm, "perm");
+      return withLock(() => share(req.table, req.id, req.email, req.perm, user));
+
+    case "unshare":
+      requireString(req.table, "table");
+      rejectSystemTable(req.table);
+      requireString(req.id, "id");
+      requireString(req.email, "email");
+      return withLock(() => unshare(req.table, req.id, req.email, user));
 
     case "provision":
       requireObject(req.spec, "spec");

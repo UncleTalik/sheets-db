@@ -77,14 +77,42 @@ constraints on one field (e.g. an amount range) compose cleanly:
 
 See `client/src/types.ts` for the full `Where` / `WhereOperators` shape.
 
+## Sharing demo (notes pane)
+
+The notes pane is row-scoped (`_userIdentifier`) AND shareable
+(`_sharedWith`). Each note shows:
+
+- An owner badge if you're not the owner (so you know whose data it is).
+- Your perm badge (`READ` / `WRITE` / `WRITE_DELETE`) if you're a collaborator.
+- A list of share badges with the current shares — owners see a `×` next to
+  each to revoke (calls `notes.unshare(id, email)`).
+- An owner-only inline "+ share" form: email + perm dropdown → `notes.share(id, email, perm)`.
+- A delete button gated by your perm: visible to the owner and to
+  `WRITE_DELETE` collaborators only.
+
+The note creation form has an optional **Share on create** fieldset —
+filling in an email + perm calls `notes.insert(input, { shareWith: [...] })`
+in one round-trip instead of insert-then-share.
+
+To see sharing end-to-end: open the app in two browsers (or one normal +
+one private), sign in as A and B (both allowlisted), have A create a note
+and share with B, then watch B's notes list when they refresh.
+
 ## What this exercises
 
 - `signIn()` — Google Identity Services popup.
-- `db.provision(...)` — declarative first-run table creation.
+- `db.provision(...)` — declarative first-run table creation, including
+  the `_userIdentifier` + `_sharedWith` magic columns on `notes`.
 - `db.table<Expense>("expenses").select()` — read with type narrowing.
 - `db.table<Expense>("expenses").where({ amount: { gte: 5, lte: 50 } }).select()` — operator-rich filtering.
 - `db.table<Expense>("expenses").insert(...)` — write with validation + defaults.
 - `db.table<Expense>("expenses").delete(id)` — delete.
+- `db.table<Note>("notes").insert(input, { shareWith: [...] })` —
+  inline share at row creation.
+- `db.table<Note>("notes").share(id, email, perm)` /
+  `db.table<Note>("notes").unshare(id, email)` — standalone share/unshare.
+- The disjunctive select path — collaborators see notes shared with them.
+- Permission tier UI — delete is hidden for READ / WRITE collaborators.
 - Error display — `SheetsDBError.code` and `details` surface the backend
   error codes (`validation`, `unauthorized`, `not_found`, etc.).
 - First-run UX — the `not_found` branch shows an inline setup button

@@ -61,7 +61,49 @@ export interface User {
   name: string;
 }
 
-export type Op = "schema" | "select" | "insert" | "update" | "delete" | "provision";
+export type Op =
+  | "schema"
+  | "select"
+  | "insert"
+  | "update"
+  | "delete"
+  | "provision"
+  | "share"
+  | "unshare";
+
+/**
+ * Permission tiers a row owner can grant via the `_sharedWith` magic column.
+ * - `READ`         — visible in `select`.
+ * - `WRITE`        — `READ` + update of data fields (cannot edit `_sharedWith` or delete).
+ * - `WRITE_DELETE` — `WRITE` + delete.
+ * The owner has all rights implicitly + share-list management. Only the
+ * owner may modify the share list; WRITE / WRITE_DELETE collaborators
+ * supplying `shareWith` / `unshareWith` get an `unauthorized` error.
+ *
+ * Wire-format note: these string values must match the server's
+ * `PERM_VALUES_` allowlist in `apps-script/Schema.gs` exactly. Unknown
+ * values are rejected server-side with a `validation` error.
+ */
+export type Permission = "READ" | "WRITE" | "WRITE_DELETE";
+
+export interface ShareEntry {
+  email: string;
+  perm: Permission;
+}
+
+export interface InsertOptions {
+  /** Inline share list applied at row creation. Caller becomes the owner,
+   *  so authority is implicit — no separate share() round-trip needed. */
+  shareWith?: ShareEntry[];
+}
+
+export interface UpdateOptions {
+  /** Owner-only. Each entry upserts (overwrites any existing entry for the
+   *  same email). Non-owner callers passing this get `unauthorized`. */
+  shareWith?: ShareEntry[];
+  /** Owner-only. Idempotent removal — unknown emails are no-ops. */
+  unshareWith?: string[];
+}
 
 export interface ColumnSpec {
   column: string;
@@ -91,6 +133,11 @@ export interface RpcRequest {
   row?: Row;
   id?: string;
   spec?: ProvisionSpec;
+  // Sharing wire fields:
+  email?: string;
+  perm?: Permission;
+  shareWith?: ShareEntry[];
+  unshareWith?: string[];
 }
 
 export type RpcResponse<T> =
@@ -109,27 +156,55 @@ export interface TableQuery<T = Row> {
    * `.where({ amount: { gt: 5, lte: 10 } })`.
    *
    * Magic columns: any column whose name starts with `_` is server-managed.
-   * Filters supplied for them are silently overridden — e.g. on a row-scoped
-   * table (one with a `_userIdentifier` column) the server clamps every
-   * `select` to the caller's own rows regardless of what you pass here.
+   * On a row-scoped table (one with a `_userIdentifier` column) the server
+   * gates visibility to rows you own or have been shared, and silently
+   * drops any client predicate referencing `_sharedWith` (anti-enumeration).
+   * Filters on `_userIdentifier` are honored but cannot expand visibility
+   * beyond your accessible rows.
    */
   where(filter: Where): TableQuery<T>;
+  /**
+   * Run the query. On a row-scoped table with `_sharedWith`, visibility is
+   * disjunctive: a row appears if you own it OR you're listed in its
+   * share list. Filters from `.where(...)` then narrow that visible set.
+   */
   select(): Promise<T[]>;
   selectOne(): Promise<T | null>;
   /**
    * Insert a row. Magic columns (names starting with `_`) are server-managed;
-   * any value supplied for them is ignored. On a row-scoped table the server
-   * stamps `_userIdentifier` with the caller's email automatically.
+   * any value supplied for them in `row` is ignored. On a row-scoped table
+   * the server stamps `_userIdentifier` with the caller's email automatically.
+   *
+   * Pass `opts.shareWith` to atomically grant access to other users in the
+   * same op — the caller becomes the owner, so this is just a round-trip
+   * saver over a follow-up `.share()` call.
    */
-  insert(row: Partial<T>): Promise<T>;
+  insert(row: Partial<T>, opts?: InsertOptions): Promise<T>;
   /**
    * Update a row. Magic columns (names starting with `_`) cannot be modified
-   * via update — values supplied for them in the patch are stripped. On a
-   * row-scoped table, attempting to update a row owned by a different user
-   * returns `not_found`.
+   * via the patch — values supplied for them are stripped. On a row-scoped
+   * table, attempting to update a row owned by a different user (and where
+   * you have no WRITE / WRITE_DELETE share) returns `not_found`.
+   *
+   * Owner-only: pass `opts.shareWith` / `opts.unshareWith` to amend the
+   * share list in the same op. WRITE / WRITE_DELETE collaborators passing
+   * either get `unauthorized`.
    */
-  update(id: string, patch: Partial<T>): Promise<T>;
+  update(id: string, patch: Partial<T>, opts?: UpdateOptions): Promise<T>;
   delete(id: string): Promise<{ id: string }>;
+  /**
+   * Owner-only. Grant `email` permission `perm` on row `id`. Upsert
+   * semantics — calling with the same email twice replaces the existing
+   * perm. Sharing with a non-allowlisted email is allowed but dormant
+   * (the recipient can't authenticate until they're allowlisted).
+   * Returns the updated row.
+   */
+  share(id: string, email: string, perm: Permission): Promise<T>;
+  /**
+   * Owner-only. Revoke any share for `email` on row `id`. Idempotent —
+   * unknown emails are a no-op. Returns the updated row.
+   */
+  unshare(id: string, email: string): Promise<T>;
 }
 
 export interface SheetsDB {

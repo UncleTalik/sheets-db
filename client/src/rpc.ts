@@ -1,10 +1,12 @@
 import {
   SheetsDBError,
   type Op,
+  type Permission,
   type ProvisionSpec,
   type RpcRequest,
   type RpcResponse,
   type Row,
+  type ShareEntry,
   type Where,
 } from "./types.js";
 
@@ -15,6 +17,10 @@ export interface RpcOptions {
   row?: Row;
   id?: string;
   spec?: ProvisionSpec;
+  email?: string;
+  perm?: Permission;
+  shareWith?: ShareEntry[];
+  unshareWith?: string[];
 }
 
 export interface RpcClient {

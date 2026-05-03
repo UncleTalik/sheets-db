@@ -308,6 +308,86 @@ The leading-underscore prefix is the magic-column convention — any future
 server-managed column will follow the same shape. Don't name your own
 columns with a leading underscore.
 
+## Row sharing
+
+A row-scoped table (one with `_userIdentifier`) can also opt into per-row
+**sharing** by adding a second magic column, `_sharedWith`. The owner can
+grant other allowlisted users tiered access to specific rows:
+
+```ts
+await db.provision({
+  tables: {
+    notes: [
+      { column: "id",              type: "string",   required: true, unique: true, default: "auto" },
+      { column: "createdAt",       type: "datetime", required: true, default: "now" },
+      { column: "title",           type: "string",   required: true },
+      { column: "body",            type: "string" },
+      { column: "_userIdentifier", type: "string",   required: true },
+      { column: "_sharedWith",     type: "string" },
+    ],
+  },
+});
+```
+
+### Permission tiers
+
+| Perm | Grants |
+|---|---|
+| `READ` | Visible in `select`. |
+| `WRITE` | `READ` + update of data fields. Cannot edit `_sharedWith` or delete the row. |
+| `WRITE_DELETE` | `WRITE` + delete. |
+
+Owner has all of the above implicitly, **plus** management of the share
+list. WRITE / WRITE_DELETE collaborators sending `shareWith` /
+`unshareWith` get `unauthorized` — only the owner can re-share.
+
+### Four ways to share
+
+1. **Inline at create**: `notes.insert(row, { shareWith: [{email, perm}] })` —
+   the caller becomes the owner, so authority is implicit.
+2. **Inline on update** (owner only):
+   `notes.update(id, patch, { shareWith: [...], unshareWith: [...] })` —
+   amend the share list in the same round-trip as a data edit.
+3. **Standalone** `notes.share(id, email, perm)` — upsert (idempotent
+   re-grant). Useful for "I forgot to invite my partner."
+4. **Standalone** `notes.unshare(id, email)` — idempotent revoke.
+
+All four normalize emails (lowercase + trim) and reject self-shares,
+malformed emails, and unknown perm strings with `validation`.
+
+### Dormant shares
+
+Sharing with an email that isn't (yet) in `_allowlist` is **allowed but
+dormant** — the share entry is stored but the recipient can't authenticate
+until they're allowlisted. This lets you pre-share with someone before
+adding them to the allowlist; once allowlisted they immediately see their
+shared rows.
+
+### Visibility and anti-enumeration
+
+- `select` returns the row (with the `_sharedWith` JSON intact) to the
+  owner and to any collaborator listed in the share list.
+- Client predicates referencing `_sharedWith` are silently dropped.
+  `notes.where({ _sharedWith: { like: "%@target.com%" } }).select()`
+  cannot be used to enumerate who's shared with whom.
+- Cross-user `share` / `unshare` (caller is not the owner) returns
+  `not_found`, the same shape as a missing ID — no leak about whether the
+  ID exists for a different owner.
+
+### Limits
+
+- Cell length: Google Sheets caps cells at ~50,000 characters. The JSON
+  list fits this comfortably for spouse-scale fan-out (hundreds of shares),
+  but it's a real ceiling. For high-fan-out apps, a separate `_shares`
+  system sheet is the right model — not yet implemented.
+- Deleting an email from `_allowlist` does **not** purge their entries
+  from existing share lists. You'd want to do that as a manual cleanup
+  in the spreadsheet UI.
+
+> ⚠️ **Migration warning.** Adding `_sharedWith` to an existing populated
+> row-scoped table is safe — empty cells parse to no shares, and existing
+> ownership scoping is unchanged.
+
 ## System tables
 
 Sheet names that start with `_` are reserved for SheetsDB's own
