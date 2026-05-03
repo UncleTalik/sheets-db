@@ -178,6 +178,17 @@ function assertRowOwnership_(row, callerEmail, id) {
   }
 }
 
+// Read the current contents of a row identified by row index (1-based).
+function readRowAt_(sheet, rowIdx, header) {
+  return rowToObj(header, sheet.getRange(rowIdx, 1, 1, header.length).getValues()[0]);
+}
+
+// Write a row object back to the sheet at rowIdx, projected through the header.
+function writeRowAt_(sheet, rowIdx, header, obj) {
+  sheet.getRange(rowIdx, 1, 1, header.length)
+    .setValues([header.map(col => toCell(obj[col]))]);
+}
+
 function select(table, where, user) {
   const sheet = getSheet(table);
   const last = sheet.getLastRow();
@@ -187,49 +198,120 @@ function select(table, where, user) {
   const typeOf = {};
   tableSchema(table).forEach(c => { typeOf[c.column] = c.type; });
 
+  let userPredicate = null;
   if (typeOf[MAGIC_COL_USER_ID_]) {
-    // Object.assign overwrites the whole field entry, so this beats any
-    // client-supplied value, including operator-shape ones like {in:[...]}.
-    where = Object.assign({}, where, { [MAGIC_COL_USER_ID_]: callerEmail_(user) });
+    const me = callerEmail_(user);
+    const hasShares = !!typeOf[MAGIC_COL_SHARED_WITH_];
+    userPredicate = function (row) {
+      if (normalizeEmail_(row[MAGIC_COL_USER_ID_]) === me) return true;
+      if (!hasShares) return false;
+      return sharedPermFor_(row, me) !== null;
+    };
+    // Anti-enumeration: drop any client predicate referencing _sharedWith.
+    if (where && Object.prototype.hasOwnProperty.call(where, MAGIC_COL_SHARED_WITH_)) {
+      where = Object.assign({}, where);
+      delete where[MAGIC_COL_SHARED_WITH_];
+    }
+    // Owner-scope clamp on _userIdentifier was the v1 mechanism; under v2 it
+    // would conflict with the shared-row branch, so we drop that override and
+    // rely on userPredicate. Client predicates on _userIdentifier still apply.
   }
 
   const matcher = buildMatcher_(where || {}, typeOf);
   const out = [];
   for (let i = 0; i < values.length; i++) {
     const obj = rowToObj(header, values[i]);
-    if (matcher(obj)) out.push(obj);
+    if (userPredicate && !userPredicate(obj)) continue;
+    if (!matcher(obj)) continue;
+    out.push(obj);
   }
   return out;
 }
 
-function insert(table, row, user) {
+function insert(table, row, user, opts) {
   const sheet = getSheet(table);
   const header = getHeader(sheet);
-  if (isRowScoped_(header) && row) delete row[MAGIC_COL_USER_ID_];
+  if (isRowScoped_(header) && row) {
+    delete row[MAGIC_COL_USER_ID_];
+    delete row[MAGIC_COL_SHARED_WITH_];
+  }
   const clean = validateRow(table, row, { user: user, isInsert: true });
+
+  // Inline shareWith on insert: caller becomes the owner, so this is just
+  // a convenience batched into the same op (no separate auth needed).
+  if (header.indexOf(MAGIC_COL_SHARED_WITH_) >= 0 && opts && opts.shareWith) {
+    if (!Array.isArray(opts.shareWith)) {
+      throw appError("bad_request", "shareWith must be an array");
+    }
+    const owner = clean[MAGIC_COL_USER_ID_];
+    const shares = opts.shareWith.map(e => validateShareEntry_(e, owner));
+    assertNoDuplicateShares_(shares);
+    clean[MAGIC_COL_SHARED_WITH_] = serializeShares_(shares);
+  }
+
   sheet.appendRow(header.map(col => toCell(clean[col])));
   return clean;
 }
 
-function update(table, id, patch, user) {
+function update(table, id, patch, user, opts) {
   const sheet = getSheet(table);
   const rowIdx = findRowIndexById(sheet, id);
   if (rowIdx < 0) throw appError("not_found", "no row with id=" + id);
 
   const header = getHeader(sheet);
-  const current = rowToObj(header, sheet.getRange(rowIdx, 1, 1, header.length).getValues()[0]);
+  const current = readRowAt_(sheet, rowIdx, header);
 
+  let isOwner = false;
   if (isRowScoped_(header)) {
-    assertRowOwnership_(current, callerEmail_(user), id);
+    const me = callerEmail_(user);
+    if (normalizeEmail_(current[MAGIC_COL_USER_ID_]) === me) {
+      isOwner = true;
+    } else {
+      const perm = sharedPermFor_(current, me);
+      if (perm !== "WRITE" && perm !== "WRITE_DELETE") {
+        throw appError("not_found", "no row with id=" + id);
+      }
+      // Non-owner with WRITE/WRITE_DELETE may not manage the share list.
+      if (opts && (opts.shareWith || opts.unshareWith)) {
+        throw appError("unauthorized", "only the row owner can manage shares");
+      }
+    }
+    // Server-managed columns are untouchable via the patch — owner uses opts,
+    // collaborators have no business writing them. Strip in both cases.
     delete patch[MAGIC_COL_USER_ID_];
+    delete patch[MAGIC_COL_SHARED_WITH_];
   }
 
-  // Merge, then validate the full row. Force id; refresh updatedAt if the schema has it.
   const merged = Object.assign({}, current, patch, { id });
   if (header.indexOf("updatedAt") >= 0) merged.updatedAt = new Date().toISOString();
 
+  // Owner-only: apply share-list mutations on top of the merged row.
+  if (isOwner && header.indexOf(MAGIC_COL_SHARED_WITH_) >= 0 && opts) {
+    let shares = parseShares_(merged[MAGIC_COL_SHARED_WITH_]);
+    if (opts.unshareWith) {
+      if (!Array.isArray(opts.unshareWith)) {
+        throw appError("bad_request", "unshareWith must be an array");
+      }
+      for (const email of opts.unshareWith) {
+        const norm = normalizeEmail_(email);
+        shares = shares.filter(s => normalizeEmail_(s.email) !== norm);
+      }
+    }
+    if (opts.shareWith) {
+      if (!Array.isArray(opts.shareWith)) {
+        throw appError("bad_request", "shareWith must be an array");
+      }
+      for (const entry of opts.shareWith) {
+        const v = validateShareEntry_(entry, merged[MAGIC_COL_USER_ID_]);
+        const idx = findShareIndex_(shares, v.email);
+        if (idx >= 0) shares[idx] = v; else shares.push(v);
+      }
+    }
+    merged[MAGIC_COL_SHARED_WITH_] = serializeShares_(shares);
+  }
+
   const clean = validateRow(table, merged, { existingId: id });
-  sheet.getRange(rowIdx, 1, 1, header.length).setValues([header.map(col => toCell(clean[col]))]);
+  writeRowAt_(sheet, rowIdx, header, clean);
   return clean;
 }
 
@@ -239,11 +321,73 @@ function remove(table, id, user) {
   if (rowIdx < 0) throw appError("not_found", "no row with id=" + id);
   const header = getHeader(sheet);
   if (isRowScoped_(header)) {
-    const current = rowToObj(header, sheet.getRange(rowIdx, 1, 1, header.length).getValues()[0]);
-    assertRowOwnership_(current, callerEmail_(user), id);
+    const me = callerEmail_(user);
+    const current = readRowAt_(sheet, rowIdx, header);
+    if (normalizeEmail_(current[MAGIC_COL_USER_ID_]) !== me) {
+      // Only WRITE_DELETE collaborators can delete; WRITE alone cannot.
+      if (sharedPermFor_(current, me) !== "WRITE_DELETE") {
+        throw appError("not_found", "no row with id=" + id);
+      }
+    }
   }
   sheet.deleteRow(rowIdx);
   return { id };
+}
+
+// --- Share / unshare ops --------------------------------------------------
+
+function requireSharingTable_(header) {
+  if (!isRowScoped_(header)) {
+    throw appError("bad_request", "table is not row-scoped (missing _userIdentifier)");
+  }
+  if (header.indexOf(MAGIC_COL_SHARED_WITH_) < 0) {
+    throw appError("bad_request", "table does not have a _sharedWith column");
+  }
+}
+
+function share(table, id, email, perm, user) {
+  const sheet = getSheet(table);
+  const header = getHeader(sheet);
+  requireSharingTable_(header);
+  const rowIdx = findRowIndexById(sheet, id);
+  if (rowIdx < 0) throw appError("not_found", "no row with id=" + id);
+  const current = readRowAt_(sheet, rowIdx, header);
+  assertRowOwnership_(current, callerEmail_(user), id);
+
+  const entry = validateShareEntry_({ email: email, perm: perm },
+                                    current[MAGIC_COL_USER_ID_]);
+  let shares = parseShares_(current[MAGIC_COL_SHARED_WITH_]);
+  const idx = findShareIndex_(shares, entry.email);
+  if (idx >= 0) shares[idx] = entry; else shares.push(entry);
+
+  current[MAGIC_COL_SHARED_WITH_] = serializeShares_(shares);
+  if (header.indexOf("updatedAt") >= 0) {
+    current.updatedAt = new Date().toISOString();
+  }
+  writeRowAt_(sheet, rowIdx, header, current);
+  return current;
+}
+
+function unshare(table, id, email, user) {
+  const sheet = getSheet(table);
+  const header = getHeader(sheet);
+  requireSharingTable_(header);
+  const rowIdx = findRowIndexById(sheet, id);
+  if (rowIdx < 0) throw appError("not_found", "no row with id=" + id);
+  const current = readRowAt_(sheet, rowIdx, header);
+  assertRowOwnership_(current, callerEmail_(user), id);
+
+  const norm = normalizeEmail_(email);
+  if (!norm) throw appError("validation", "email required");
+  const shares = parseShares_(current[MAGIC_COL_SHARED_WITH_])
+    .filter(s => normalizeEmail_(s.email) !== norm);
+
+  current[MAGIC_COL_SHARED_WITH_] = serializeShares_(shares);
+  if (header.indexOf("updatedAt") >= 0) {
+    current.updatedAt = new Date().toISOString();
+  }
+  writeRowAt_(sheet, rowIdx, header, current);
+  return current;
 }
 
 function toCell(v) {

@@ -10,6 +10,8 @@ import {
   type Expense,
   type Note,
   type NoteInput,
+  type ParsedShare,
+  type Permission,
 } from "./types.js";
 
 const webAppUrl = import.meta.env.VITE_SHEETSDB_URL;
@@ -178,33 +180,29 @@ async function refresh() {
   }
 }
 
+function parseShares(raw: string | undefined): ParsedShare[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed as ParsedShare[];
+  } catch {
+    return [];
+  }
+}
+
+function lower(s: string | undefined): string {
+  return String(s ?? "").trim().toLowerCase();
+}
+
 async function refreshNotes() {
   try {
     const rows = await notes.select();
     rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     notesList.innerHTML = "";
+    const me = lower(db.currentUser()?.email);
     for (const row of rows) {
-      const li = document.createElement("li");
-      const title = document.createElement("span");
-      title.className = "title";
-      title.textContent = row.title;
-      const body = document.createElement("span");
-      body.className = "body";
-      body.textContent = row.body ?? "";
-      const del = document.createElement("button");
-      del.className = "delete";
-      del.textContent = "×";
-      del.title = "Delete";
-      del.addEventListener("click", async () => {
-        try {
-          await notes.delete(row.id);
-          await refreshNotes();
-        } catch (err) {
-          handleError(err);
-        }
-      });
-      li.append(title, body, del);
-      notesList.appendChild(li);
+      notesList.appendChild(renderNoteItem(row, me));
     }
   } catch (err) {
     // The `notes` table may not exist yet (older provisioned spreadsheets).
@@ -216,6 +214,131 @@ async function refreshNotes() {
     }
     handleError(err);
   }
+}
+
+function renderNoteItem(row: Note, me: string): HTMLLIElement {
+  const ownerEmail = lower(row._userIdentifier);
+  const isOwner = ownerEmail === me;
+  const shares = parseShares(row._sharedWith);
+  const myShare = isOwner ? null : shares.find((s) => lower(s.email) === me) ?? null;
+  const canDelete = isOwner || myShare?.perm === "WRITE_DELETE";
+
+  const li = document.createElement("li");
+
+  const row1 = document.createElement("div");
+  row1.className = "row1";
+  const title = document.createElement("span");
+  title.className = "title";
+  title.textContent = row.title;
+  const body = document.createElement("span");
+  body.className = "body";
+  body.textContent = row.body ?? "";
+  row1.append(title, body);
+  li.appendChild(row1);
+
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  if (canDelete) {
+    const del = document.createElement("button");
+    del.className = "delete";
+    del.textContent = "×";
+    del.title = "Delete";
+    del.addEventListener("click", async () => {
+      try {
+        await notes.delete(row.id);
+        await refreshNotes();
+      } catch (err) {
+        handleError(err);
+      }
+    });
+    actions.appendChild(del);
+  }
+  li.appendChild(actions);
+
+  const shareRow = document.createElement("div");
+  shareRow.className = "share-row";
+
+  if (!isOwner) {
+    // Visible to a collaborator: show whose row this is and what they can do.
+    const ownerBadge = document.createElement("span");
+    ownerBadge.className = "badge owner";
+    ownerBadge.textContent = `owner: ${row._userIdentifier}`;
+    shareRow.appendChild(ownerBadge);
+    if (myShare) {
+      const permBadge = document.createElement("span");
+      permBadge.className = "badge perm";
+      permBadge.textContent = `you: ${myShare.perm}`;
+      shareRow.appendChild(permBadge);
+    }
+  }
+
+  // Show the share list to anyone who can see the row — collaborators benefit
+  // from seeing who else has access. Revoke buttons are owner-only.
+  for (const share of shares) {
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = `${share.email} · ${share.perm}`;
+    if (isOwner) {
+      const x = document.createElement("button");
+      x.className = "x";
+      x.textContent = "×";
+      x.title = `Revoke share with ${share.email}`;
+      x.addEventListener("click", async () => {
+        try {
+          await notes.unshare(row.id, share.email);
+          await refreshNotes();
+        } catch (err) {
+          handleError(err);
+        }
+      });
+      badge.appendChild(x);
+    }
+    shareRow.appendChild(badge);
+  }
+
+  if (isOwner) {
+    shareRow.appendChild(buildShareForm(row.id));
+  }
+
+  li.appendChild(shareRow);
+  return li;
+}
+
+function buildShareForm(noteId: string): HTMLFormElement {
+  const form = document.createElement("form");
+  form.className = "share-form";
+
+  const emailInput = document.createElement("input");
+  emailInput.type = "email";
+  emailInput.placeholder = "share with…";
+  emailInput.required = true;
+
+  const permSelect = document.createElement("select");
+  for (const p of ["READ", "WRITE", "WRITE_DELETE"] as const) {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = p;
+    permSelect.appendChild(opt);
+  }
+
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.textContent = "+ share";
+
+  form.append(emailInput, permSelect, submit);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = emailInput.value.trim();
+    if (!email) return;
+    const perm = permSelect.value as Permission;
+    try {
+      await notes.share(noteId, email, perm);
+      await refreshNotes();
+    } catch (err) {
+      handleError(err);
+    }
+  });
+  return form;
 }
 
 async function demoSystemTableGuard() {
@@ -316,8 +439,14 @@ notesAddForm.addEventListener("submit", async (e) => {
   if (!title) return;
   // Server stamps `_userIdentifier` from the verified caller — clients omit it.
   const input: NoteInput = body ? { title, body } : { title };
+  // Optional inline shareWith — saves a follow-up `.share()` round-trip.
+  const shareEmail = String(data.get("share-email") ?? "").trim();
+  const sharePerm = String(data.get("share-perm") ?? "READ") as Permission;
+  const opts = shareEmail
+    ? { shareWith: [{ email: shareEmail, perm: sharePerm }] }
+    : undefined;
   try {
-    await notes.insert(input);
+    await notes.insert(input, opts);
     notesAddForm.reset();
     await refreshNotes();
   } catch (err) {

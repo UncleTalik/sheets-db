@@ -1,6 +1,6 @@
 {
   "name": "@UncleTalik/sheetsdb-client",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Typed client for the SheetsDB Apps Script backend",
   "type": "module",
   "main": "./dist/index.cjs",

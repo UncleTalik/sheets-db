@@ -172,6 +172,112 @@ describe("rpc", () => {
     );
   });
 
+  describe("sharing wire format", () => {
+    it("share carries email + perm at top level", async () => {
+      const fetchMock = mockFetchJson({ ok: true, data: { id: "n_1" } });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await rpc.call({
+        op: "share",
+        table: "notes",
+        id: "n_1",
+        email: "b@x.io",
+        perm: "WRITE",
+      });
+      const [, init] = fetchMock.mock.calls[0]!;
+      expect(JSON.parse(init!.body as string)).toEqual({
+        idToken: TOKEN,
+        op: "share",
+        table: "notes",
+        id: "n_1",
+        email: "b@x.io",
+        perm: "WRITE",
+      });
+    });
+
+    it("unshare carries email at top level", async () => {
+      const fetchMock = mockFetchJson({ ok: true, data: { id: "n_1" } });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await rpc.call({
+        op: "unshare",
+        table: "notes",
+        id: "n_1",
+        email: "b@x.io",
+      });
+      const [, init] = fetchMock.mock.calls[0]!;
+      expect(JSON.parse(init!.body as string)).toEqual({
+        idToken: TOKEN,
+        op: "unshare",
+        table: "notes",
+        id: "n_1",
+        email: "b@x.io",
+      });
+    });
+
+    it("insert with shareWith forwards the array verbatim", async () => {
+      const fetchMock = mockFetchJson({ ok: true, data: { id: "n_1" } });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await rpc.call({
+        op: "insert",
+        table: "notes",
+        row: { title: "x" },
+        shareWith: [{ email: "b@x.io", perm: "READ" }],
+      });
+      const [, init] = fetchMock.mock.calls[0]!;
+      expect(JSON.parse(init!.body as string)).toEqual({
+        idToken: TOKEN,
+        op: "insert",
+        table: "notes",
+        row: { title: "x" },
+        shareWith: [{ email: "b@x.io", perm: "READ" }],
+      });
+    });
+
+    it("update with shareWith + unshareWith forwards both", async () => {
+      const fetchMock = mockFetchJson({ ok: true, data: { id: "n_1" } });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await rpc.call({
+        op: "update",
+        table: "notes",
+        id: "n_1",
+        row: { title: "y" },
+        shareWith: [{ email: "c@x.io", perm: "WRITE_DELETE" }],
+        unshareWith: ["b@x.io"],
+      });
+      const [, init] = fetchMock.mock.calls[0]!;
+      expect(JSON.parse(init!.body as string)).toEqual({
+        idToken: TOKEN,
+        op: "update",
+        table: "notes",
+        id: "n_1",
+        row: { title: "y" },
+        shareWith: [{ email: "c@x.io", perm: "WRITE_DELETE" }],
+        unshareWith: ["b@x.io"],
+      });
+    });
+
+    it("share / unshare against a system table is rejected client-side", async () => {
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const rpc = createRpc(WEB_APP_URL, () => TOKEN);
+
+      await expect(
+        rpc.call({ op: "share", table: "_meta", id: "x", email: "y@z", perm: "READ" }),
+      ).rejects.toMatchObject({ code: "unauthorized" });
+      await expect(
+        rpc.call({ op: "unshare", table: "_allowlist", id: "x", email: "y@z" }),
+      ).rejects.toMatchObject({ code: "unauthorized" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("provision sends op=provision with spec at top level (not in row)", async () => {
     const result = {
       tablesCreated: ["expenses"],

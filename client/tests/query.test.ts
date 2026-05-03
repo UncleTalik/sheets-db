@@ -192,4 +192,90 @@ describe("TableQuery", () => {
       where: { amount: { lt: 10 } },
     });
   });
+
+  describe("sharing", () => {
+    it("insert without opts omits shareWith from payload", async () => {
+      const { rpc, call } = mockRpc();
+      call.mockResolvedValueOnce({ id: "n_1", title: "x" });
+      await createTableQuery(rpc, "notes").insert({ title: "x" });
+      expect(call).toHaveBeenCalledWith({
+        op: "insert",
+        table: "notes",
+        row: { title: "x" },
+      });
+    });
+
+    it("insert with opts.shareWith forwards the array", async () => {
+      const { rpc, call } = mockRpc();
+      call.mockResolvedValueOnce({ id: "n_1", title: "x" });
+      await createTableQuery(rpc, "notes").insert(
+        { title: "x" },
+        { shareWith: [{ email: "b@x.io", perm: "READ" }] },
+      );
+      expect(call).toHaveBeenCalledWith({
+        op: "insert",
+        table: "notes",
+        row: { title: "x" },
+        shareWith: [{ email: "b@x.io", perm: "READ" }],
+      });
+    });
+
+    it("update with both shareWith and unshareWith forwards both", async () => {
+      const { rpc, call } = mockRpc();
+      call.mockResolvedValueOnce({ id: "n_1", title: "x" });
+      await createTableQuery(rpc, "notes").update(
+        "n_1",
+        { title: "renamed" },
+        {
+          shareWith: [{ email: "c@x.io", perm: "WRITE" }],
+          unshareWith: ["b@x.io"],
+        },
+      );
+      expect(call).toHaveBeenCalledWith({
+        op: "update",
+        table: "notes",
+        id: "n_1",
+        row: { title: "renamed" },
+        shareWith: [{ email: "c@x.io", perm: "WRITE" }],
+        unshareWith: ["b@x.io"],
+      });
+    });
+
+    it("update without opts omits both share fields", async () => {
+      const { rpc, call } = mockRpc();
+      call.mockResolvedValueOnce({ id: "n_1", title: "x" });
+      await createTableQuery(rpc, "notes").update("n_1", { title: "y" });
+      expect(call).toHaveBeenCalledWith({
+        op: "update",
+        table: "notes",
+        id: "n_1",
+        row: { title: "y" },
+      });
+    });
+
+    it("share() sends op=share with email + perm", async () => {
+      const { rpc, call } = mockRpc();
+      call.mockResolvedValueOnce({ id: "n_1" });
+      await createTableQuery(rpc, "notes").share("n_1", "b@x.io", "WRITE_DELETE");
+      expect(call).toHaveBeenCalledWith({
+        op: "share",
+        table: "notes",
+        id: "n_1",
+        email: "b@x.io",
+        perm: "WRITE_DELETE",
+      });
+    });
+
+    it("unshare() sends op=unshare with email", async () => {
+      const { rpc, call } = mockRpc();
+      call.mockResolvedValueOnce({ id: "n_1" });
+      await createTableQuery(rpc, "notes").unshare("n_1", "b@x.io");
+      expect(call).toHaveBeenCalledWith({
+        op: "unshare",
+        table: "notes",
+        id: "n_1",
+        email: "b@x.io",
+      });
+    });
+  });
 });

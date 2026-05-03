@@ -7,6 +7,19 @@ let _schemaCache = null;
 // and mutation by a case-insensitive match against the caller's email.
 const MAGIC_COL_USER_ID_ = "_userIdentifier";
 
+// Magic column name for per-row sharing. Holds a JSON-encoded list of
+// `{email, perm}` entries. Empty/missing cell parses to no shares.
+// Requires `_userIdentifier` to be present too — sharing is only meaningful
+// for row-scoped tables.
+const MAGIC_COL_SHARED_WITH_ = "_sharedWith";
+
+// Permission tiers a row owner can grant via `_sharedWith`.
+// Owner has all rights implicitly + share-list management. Hierarchy:
+//   READ          — visible in select
+//   WRITE         — READ + update of data fields
+//   WRITE_DELETE  — WRITE + delete
+const PERM_VALUES_ = ["READ", "WRITE", "WRITE_DELETE"];
+
 /**
  * Returns { tableName: [ { column, type, required, unique, default }, ... ] }
  */
@@ -140,6 +153,84 @@ function generateId(table) {
   const prefix = table.slice(0, 3).toLowerCase();
   const rand = Utilities.getUuid().replace(/-/g, "").slice(0, 10);
   return prefix + "_" + rand;
+}
+
+// --- Share-list helpers ---------------------------------------------------
+//
+// `_sharedWith` cells store JSON: `[{"email":"…","perm":"READ"},…]`.
+// Empty / null / whitespace-only cells parse to `[]`. A malformed cell
+// (someone hand-edited the sheet) throws `internal` — that's a data
+// integrity error, not a client problem.
+
+function parseShares_(cellValue) {
+  if (cellValue === undefined || cellValue === null) return [];
+  const s = String(cellValue).trim();
+  if (s === "") return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(s);
+  } catch (e) {
+    throw appError("internal", "_sharedWith cell is not valid JSON");
+  }
+  if (!Array.isArray(parsed)) {
+    throw appError("internal", "_sharedWith cell must be a JSON array");
+  }
+  return parsed;
+}
+
+function serializeShares_(shares) {
+  if (!shares || shares.length === 0) return "";
+  return JSON.stringify(shares);
+}
+
+// Validate and canonicalize a single `{email, perm}` entry. `ownerEmail`
+// is the row owner (already lowercased) — used to reject self-share.
+function validateShareEntry_(entry, ownerEmail) {
+  if (!entry || typeof entry !== "object") {
+    throw appError("validation", "share entry must be an object");
+  }
+  const email = normalizeEmail_(entry.email);
+  if (!email) {
+    throw appError("validation", "share entry missing email");
+  }
+  if (email.indexOf("@") < 0) {
+    throw appError("validation", "share entry email is malformed");
+  }
+  if (email === normalizeEmail_(ownerEmail)) {
+    throw appError("validation", "cannot share a row with its owner");
+  }
+  const perm = String(entry.perm || "").toUpperCase();
+  if (PERM_VALUES_.indexOf(perm) < 0) {
+    throw appError("validation", "share perm must be one of: " + PERM_VALUES_.join(", "));
+  }
+  return { email: email, perm: perm };
+}
+
+function findShareIndex_(shares, normalizedEmail) {
+  for (let i = 0; i < shares.length; i++) {
+    if (normalizeEmail_(shares[i].email) === normalizedEmail) return i;
+  }
+  return -1;
+}
+
+// Reject duplicate emails inside a single shareWith batch (e.g. on insert).
+// Lets `share()` op upsert idempotently while keeping batches deterministic.
+function assertNoDuplicateShares_(shares) {
+  const seen = {};
+  for (const s of shares) {
+    const e = normalizeEmail_(s.email);
+    if (seen[e]) throw appError("validation", "duplicate share email: " + e);
+    seen[e] = true;
+  }
+}
+
+// What permission does `normalizedEmail` have on `row`? Returns one of
+// PERM_VALUES_ or null. Owner is NOT considered here — callers check
+// ownership before falling through to this.
+function sharedPermFor_(row, normalizedEmail) {
+  const shares = parseShares_(row[MAGIC_COL_SHARED_WITH_]);
+  const idx = findShareIndex_(shares, normalizedEmail);
+  return idx < 0 ? null : shares[idx].perm;
 }
 
 function isUnique(table, column, value, existingId) {

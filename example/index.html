@@ -29,8 +29,20 @@
       section { margin-top: 2.5rem; }
       section h2 { font-size: 1.1rem; margin: 0 0 .25rem; }
       section .scope-hint { color: #888; font-size: .85rem; margin: 0 0 1rem; }
-      #notes-list li .title { flex: 1; font-weight: 500; }
-      #notes-list li .body { flex: 2; color: #888; }
+      #notes-list li { display: grid; grid-template-columns: 1fr auto; gap: .5rem .75rem; align-items: center; }
+      #notes-list li .row1 { display: flex; gap: .75rem; align-items: center; min-width: 0; }
+      #notes-list li .actions { display: flex; gap: .25rem; }
+      #notes-list li .title { font-weight: 500; }
+      #notes-list li .body { color: #888; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #notes-list li .share-row { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; font-size: .8rem; }
+      .badge { display: inline-flex; align-items: center; gap: .25rem; padding: .1rem .4rem; border-radius: 999px; background: #8881; font-family: ui-monospace, monospace; font-size: .75rem; }
+      .badge.owner { background: #6cf2; }
+      .badge.perm { background: #fc62; }
+      .badge .x { background: none; border: 0; color: #c33; padding: 0 0 0 .15rem; font-size: .9rem; cursor: pointer; line-height: 1; }
+      .share-form { display: flex; gap: .25rem; align-items: center; flex-wrap: wrap; }
+      .share-form input[type="email"] { padding: .15rem .35rem; font-size: .8rem; }
+      .share-form select { padding: .1rem .25rem; font-size: .8rem; }
+      .share-form button { padding: .15rem .5rem; font-size: .8rem; }
       .status { color: #888; font-size: .9rem; }
       .error { color: #c33; }
       .setup { background: #fff8d6; border: 1px solid #e6c200; padding: .75rem 1rem; margin-bottom: 1.5rem; border-radius: 4px; }
@@ -97,6 +109,19 @@
       <form id="notes-add-form">
         <input name="title" type="text" placeholder="Title" required />
         <input name="body" type="text" placeholder="Body (optional)" style="grid-column: 1 / -1" />
+        <fieldset style="margin: 0; grid-column: 1 / -1;">
+          <legend>Share on create (optional)</legend>
+          <div>
+            <label>Email <input name="share-email" type="email" placeholder="collaborator@example.com" /></label>
+            <label>Permission
+              <select name="share-perm">
+                <option value="READ">READ</option>
+                <option value="WRITE">WRITE</option>
+                <option value="WRITE_DELETE">WRITE_DELETE</option>
+              </select>
+            </label>
+          </div>
+        </fieldset>
         <button type="submit">Add note</button>
       </form>
       <ul id="notes-list"></ul>
