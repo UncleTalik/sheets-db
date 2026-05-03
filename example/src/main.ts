@@ -4,7 +4,12 @@ import {
   type Where,
   type WhereOperators,
 } from "@UncleTalik/sheetsdb-client";
-import { EXPENSES_SCHEMA, type Expense } from "./types.js";
+import {
+  EXPENSES_SCHEMA,
+  NOTES_SCHEMA,
+  type Expense,
+  type Note,
+} from "./types.js";
 
 const webAppUrl = import.meta.env.VITE_SHEETSDB_URL;
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -17,6 +22,7 @@ if (!webAppUrl || !googleClientId) {
 
 const db = createClient({ webAppUrl, googleClientId });
 const expenses = db.table<Expense>("expenses");
+const notes = db.table<Note>("notes");
 
 if (import.meta.env.DEV) {
   (window as unknown as { db: typeof db }).db = db;
@@ -35,6 +41,9 @@ const list = $<HTMLUListElement>("#list");
 const errorBox = $<HTMLDivElement>("#error");
 const setupBox = $<HTMLDivElement>("#setup");
 const setupRunBtn = $<HTMLButtonElement>("#setup-run");
+const notesSection = $<HTMLElement>("#notes-section");
+const notesAddForm = $<HTMLFormElement>("#notes-add-form");
+const notesList = $<HTMLUListElement>("#notes-list");
 
 let currentFilter: Where = {};
 
@@ -61,20 +70,25 @@ function setSignedOut() {
   form.hidden = true;
   filterForm.hidden = true;
   setupBox.hidden = true;
+  notesSection.hidden = true;
   list.innerHTML = "";
+  notesList.innerHTML = "";
 }
 
 function showSetup() {
   setupBox.hidden = false;
   form.hidden = true;
   filterForm.hidden = true;
+  notesSection.hidden = true;
   list.innerHTML = "";
+  notesList.innerHTML = "";
 }
 
 function showReady() {
   setupBox.hidden = true;
   form.hidden = false;
   filterForm.hidden = false;
+  notesSection.hidden = false;
 }
 
 function buildFilterFromForm(formEl: HTMLFormElement): Where {
@@ -148,9 +162,50 @@ async function refresh() {
       li.append(amount, category, del);
       list.appendChild(li);
     }
+    await refreshNotes();
   } catch (err) {
     if (err instanceof SheetsDBError && err.code === "not_found") {
       showSetup();
+      return;
+    }
+    handleError(err);
+  }
+}
+
+async function refreshNotes() {
+  try {
+    const rows = await notes.select();
+    rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    notesList.innerHTML = "";
+    for (const row of rows) {
+      const li = document.createElement("li");
+      const title = document.createElement("span");
+      title.className = "title";
+      title.textContent = row.title;
+      const body = document.createElement("span");
+      body.className = "body";
+      body.textContent = row.body ?? "";
+      const del = document.createElement("button");
+      del.className = "delete";
+      del.textContent = "×";
+      del.title = "Delete";
+      del.addEventListener("click", async () => {
+        try {
+          await notes.delete(row.id);
+          await refreshNotes();
+        } catch (err) {
+          handleError(err);
+        }
+      });
+      li.append(title, body, del);
+      notesList.appendChild(li);
+    }
+  } catch (err) {
+    // The `notes` table may not exist yet (older provisioned spreadsheets).
+    // Don't surface that as a hard error — the setup banner already prompts
+    // the user to provision, which adds `notes` alongside `expenses`.
+    if (err instanceof SheetsDBError && err.code === "not_found") {
+      notesSection.hidden = true;
       return;
     }
     handleError(err);
@@ -201,7 +256,9 @@ setupRunBtn.addEventListener("click", async () => {
   const originalLabel = setupRunBtn.textContent;
   setupRunBtn.textContent = "Creating…";
   try {
-    await db.provision({ tables: { expenses: EXPENSES_SCHEMA } });
+    await db.provision({
+      tables: { expenses: EXPENSES_SCHEMA, notes: NOTES_SCHEMA },
+    });
     await refresh();
   } catch (err) {
     handleError(err);
@@ -242,4 +299,25 @@ filterClearBtn.addEventListener("click", async () => {
   filterForm.reset();
   currentFilter = {};
   await refresh();
+});
+
+notesAddForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearError();
+  const data = new FormData(notesAddForm);
+  const title = String(data.get("title") ?? "").trim();
+  const body = String(data.get("body") ?? "").trim();
+  if (!title) return;
+  try {
+    // Don't pass _userIdentifier — the server stamps it from the caller's
+    // verified email. Any value supplied here would be ignored anyway.
+    await notes.insert({
+      title,
+      ...(body ? { body } : {}),
+    } as Partial<Note>);
+    notesAddForm.reset();
+    await refreshNotes();
+  } catch (err) {
+    handleError(err);
+  }
 });

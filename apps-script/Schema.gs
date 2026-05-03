@@ -46,8 +46,9 @@ function tableSchema(table) {
 /**
  * Clean, validate, and apply defaults. Returns a new row object safe to write.
  * `existingId` is passed on updates so the uniqueness check can skip the current row.
+ * `user` + `isInsert` drive the `_userIdentifier` magic-column auto-stamp.
  */
-function validateRow(table, row, { existingId = null } = {}) {
+function validateRow(table, row, { existingId = null, user = null, isInsert = false } = {}) {
   const schema = tableSchema(table);
   const clean = {};
 
@@ -62,6 +63,17 @@ function validateRow(table, row, { existingId = null } = {}) {
         v = new Date().toISOString();
       } else if (col.default !== null) {
         v = col.default;
+      }
+    }
+
+    // Magic column: server stamps row owner on insert; normalizes case otherwise.
+    // Caller-supplied values are ignored on insert. On update, the merged row
+    // already carries the existing value (the `update` op strips the patch).
+    if (col.column === "_userIdentifier") {
+      if (isInsert && user && user.email) {
+        v = String(user.email).trim().toLowerCase();
+      } else if (v !== undefined && v !== null && v !== "") {
+        v = String(v).trim().toLowerCase();
       }
     }
 

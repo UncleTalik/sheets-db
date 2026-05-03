@@ -156,7 +156,7 @@ function findRowIndexById(sheet, id) {
   return pos < 0 ? -1 : pos + 2; // +2: header row + 1-indexed
 }
 
-function select(table, where) {
+function select(table, where, user) {
   const sheet = getSheet(table);
   const last = sheet.getLastRow();
   if (last < 2) return [];
@@ -164,6 +164,19 @@ function select(table, where) {
   const header = values.shift().map(String);
   const typeOf = {};
   tableSchema(table).forEach(c => { typeOf[c.column] = c.type; });
+
+  // Row-scoped table: clamp the query to the caller's rows. Replaces any
+  // client-supplied clause on this field (operator-shape included) since
+  // Object.assign overwrites the whole field entry.
+  if (typeOf["_userIdentifier"]) {
+    if (!user || !user.email) {
+      throw appError("unauthorized", "row-scoped table requires an authenticated user");
+    }
+    where = Object.assign({}, where, {
+      _userIdentifier: String(user.email).trim().toLowerCase()
+    });
+  }
+
   const matcher = buildMatcher_(where || {}, typeOf);
   const out = [];
   for (let i = 0; i < values.length; i++) {
@@ -176,7 +189,14 @@ function select(table, where) {
 function insert(table, row, user) {
   const sheet = getSheet(table);
   const header = getHeader(sheet);
-  const clean = validateRow(table, row);
+  // Defense-in-depth: clients can't seed the magic owner column. validateRow
+  // would overwrite it on insert anyway, but stripping early avoids any
+  // chance of a downstream code path observing the spoofed value.
+  if (header.indexOf("_userIdentifier") >= 0 && row &&
+      Object.prototype.hasOwnProperty.call(row, "_userIdentifier")) {
+    delete row._userIdentifier;
+  }
+  const clean = validateRow(table, row, { user: user, isInsert: true });
   sheet.appendRow(header.map(col => toCell(clean[col])));
   return clean;
 }
@@ -189,6 +209,20 @@ function update(table, id, patch, user) {
   const header = getHeader(sheet);
   const current = rowToObj(header, sheet.getRange(rowIdx, 1, 1, header.length).getValues()[0]);
 
+  // Row-scoped table: gate by ownership and prevent owner-rewrite via patch.
+  // Mismatch returns the same `not_found` shape as a missing row to avoid
+  // leaking which IDs exist across owners.
+  if (header.indexOf("_userIdentifier") >= 0) {
+    if (!user || !user.email) {
+      throw appError("unauthorized", "row-scoped table requires an authenticated user");
+    }
+    if (String(current._userIdentifier).toLowerCase() !==
+        String(user.email).toLowerCase()) {
+      throw appError("not_found", "no row with id=" + id);
+    }
+    if (patch) delete patch._userIdentifier;
+  }
+
   // Merge, then validate the full row. Force id; refresh updatedAt if the schema has it.
   const merged = Object.assign({}, current, patch, { id });
   if (header.indexOf("updatedAt") >= 0) merged.updatedAt = new Date().toISOString();
@@ -198,10 +232,21 @@ function update(table, id, patch, user) {
   return clean;
 }
 
-function remove(table, id) {
+function remove(table, id, user) {
   const sheet = getSheet(table);
   const rowIdx = findRowIndexById(sheet, id);
   if (rowIdx < 0) throw appError("not_found", "no row with id=" + id);
+  const header = getHeader(sheet);
+  if (header.indexOf("_userIdentifier") >= 0) {
+    if (!user || !user.email) {
+      throw appError("unauthorized", "row-scoped table requires an authenticated user");
+    }
+    const current = rowToObj(header, sheet.getRange(rowIdx, 1, 1, header.length).getValues()[0]);
+    if (String(current._userIdentifier).toLowerCase() !==
+        String(user.email).toLowerCase()) {
+      throw appError("not_found", "no row with id=" + id);
+    }
+  }
   sheet.deleteRow(rowIdx);
   return { id };
 }
