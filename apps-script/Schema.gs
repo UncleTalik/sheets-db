@@ -2,6 +2,11 @@
 // so this is only deduped within a single dispatch.
 let _schemaCache = null;
 
+// Magic column name. A table that includes a column literally named this
+// becomes row-scoped: the server stamps it on insert and gates every read
+// and mutation by a case-insensitive match against the caller's email.
+const MAGIC_COL_USER_ID_ = "_userIdentifier";
+
 /**
  * Returns { tableName: [ { column, type, required, unique, default }, ... ] }
  */
@@ -46,8 +51,9 @@ function tableSchema(table) {
 /**
  * Clean, validate, and apply defaults. Returns a new row object safe to write.
  * `existingId` is passed on updates so the uniqueness check can skip the current row.
+ * `user` + `isInsert` drive the `_userIdentifier` magic-column auto-stamp.
  */
-function validateRow(table, row, { existingId = null } = {}) {
+function validateRow(table, row, { existingId = null, user = null, isInsert = false } = {}) {
   const schema = tableSchema(table);
   const clean = {};
 
@@ -63,6 +69,12 @@ function validateRow(table, row, { existingId = null } = {}) {
       } else if (col.default !== null) {
         v = col.default;
       }
+    }
+
+    // Magic column: server stamps the row owner on insert. Comparisons
+    // elsewhere are case-insensitive, so no normalization needed on update.
+    if (col.column === MAGIC_COL_USER_ID_ && isInsert && user && user.email) {
+      v = normalizeEmail_(user.email);
     }
 
     // Required check

@@ -123,3 +123,171 @@ function runMatcherUnitTest_() {
   console.log("matcher unit test: " + passed + " passed, " + failed + " failed");
   if (failed > 0) throw new Error("matcher unit test failures: " + failed);
 }
+
+/**
+ * End-to-end test of the `_userIdentifier` magic column. Provisions a
+ * temporary sheet + matching `_meta` rows, exercises insert/select/update/
+ * delete as two distinct users, then cleans up. Run from the editor
+ * (Run > runRowAccessControlTest_) after a deploy.
+ *
+ * If the run aborts mid-way (e.g. you cancel from the editor), re-run it —
+ * the test sheet name has a random suffix and the `finally` block deletes
+ * the sheet and the appended `_meta` rows. Any garbage from a hard kill is
+ * a sheet with prefix `racTest` and trailing `_meta` rows pointing at it.
+ */
+function runRowAccessControlTest_() {
+  _schemaCache = null;
+  const userA = { email: "alice@test", name: "Alice" };
+  const userB = { email: "bob@test",   name: "Bob" };
+  const tableName = "racTest" + Utilities.getUuid().replace(/-/g, "").slice(0, 8);
+
+  let sheet = null;
+  let metaRowsAdded = 0;
+  let passed = 0, failed = 0;
+
+  function check(label, fn) {
+    try {
+      fn();
+      passed++;
+    } catch (e) {
+      failed++;
+      console.error("FAIL [" + label + "] " + (e && e.message));
+    }
+  }
+
+  function expectThrowsWithCode(label, fn, expectedCode) {
+    try {
+      fn();
+      failed++;
+      console.error("FAIL [" + label + "] expected throw");
+    } catch (e) {
+      if (e && e.code === expectedCode) {
+        passed++;
+      } else {
+        failed++;
+        console.error("FAIL [" + label + "] expected code " + expectedCode +
+          ", got " + (e && e.code) + " (" + (e && e.message) + ")");
+      }
+    }
+  }
+
+  const metaSheet = ss().getSheetByName("_meta");
+  if (!metaSheet) throw new Error("_meta sheet missing — run bootstrap() first");
+
+  // Build _meta rows in whatever column order this spreadsheet's _meta uses.
+  const metaHeader = metaSheet.getRange(1, 1, 1, metaSheet.getLastColumn())
+    .getValues()[0].map(s => String(s).trim());
+  const metaRow = function (obj) {
+    return metaHeader.map(h => obj[h] !== undefined ? obj[h] : "");
+  };
+
+  try {
+    sheet = ss().insertSheet(tableName);
+    sheet.appendRow(["id", "createdAt", "title", "_userIdentifier"]);
+
+    const cols = [
+      { table: tableName, column: "id",              type: "string",   required: "TRUE", unique: "TRUE",  default: "auto" },
+      { table: tableName, column: "createdAt",       type: "datetime", required: "TRUE", unique: "FALSE", default: "now"  },
+      { table: tableName, column: "title",           type: "string",   required: "TRUE", unique: "FALSE", default: ""     },
+      { table: tableName, column: "_userIdentifier", type: "string",   required: "TRUE", unique: "FALSE", default: ""     }
+    ];
+    cols.forEach(c => { metaSheet.appendRow(metaRow(c)); metaRowsAdded++; });
+
+    _schemaCache = null; // force re-read so the new table is visible
+
+    // Insert as Alice — server stamps owner.
+    const aliceRow = insert(tableName, { title: "alice note" }, userA);
+    check("insert auto-stamps owner with caller email (lowercased)", () => {
+      if (aliceRow._userIdentifier !== "alice@test") {
+        throw new Error("expected alice@test, got " + aliceRow._userIdentifier);
+      }
+    });
+
+    // Insert with a spoofed identifier — server ignores it.
+    const spoofRow = insert(tableName, { title: "spoof", _userIdentifier: "evil@x" }, userA);
+    check("insert ignores client-supplied _userIdentifier", () => {
+      if (spoofRow._userIdentifier !== "alice@test") {
+        throw new Error("expected alice@test, got " + spoofRow._userIdentifier);
+      }
+    });
+
+    // Bob selects: sees nothing.
+    check("bob's select returns 0 of alice's rows", () => {
+      const rows = select(tableName, {}, userB);
+      if (rows.length !== 0) throw new Error("expected 0 rows, got " + rows.length);
+    });
+
+    // Alice selects: sees her 2 rows.
+    check("alice's select returns her own 2 rows", () => {
+      const rows = select(tableName, {}, userA);
+      if (rows.length !== 2) throw new Error("expected 2 rows, got " + rows.length);
+    });
+
+    // Adversarial primitive override is ignored.
+    check("client _userIdentifier=bob in where is ignored for alice", () => {
+      const rows = select(tableName, { _userIdentifier: "bob@test" }, userA);
+      if (rows.length !== 2) throw new Error("expected 2 rows, got " + rows.length);
+    });
+
+    // Adversarial operator-shape override is ignored.
+    check("client _userIdentifier={in:[bob]} in where is ignored", () => {
+      const rows = select(tableName, { _userIdentifier: { in: ["bob@test"] } }, userA);
+      if (rows.length !== 2) throw new Error("expected 2 rows, got " + rows.length);
+    });
+
+    // Bob can't update or delete Alice's row — both surface as not_found.
+    expectThrowsWithCode("bob update of alice's row -> not_found",
+      function () { update(tableName, aliceRow.id, { title: "hijacked" }, userB); },
+      "not_found");
+    expectThrowsWithCode("bob delete of alice's row -> not_found",
+      function () { remove(tableName, aliceRow.id, userB); },
+      "not_found");
+
+    // Confirm Bob's failed update did not actually mutate the row.
+    check("bob's failed update did not alter alice's row", () => {
+      const rows = select(tableName, { id: aliceRow.id }, userA);
+      if (rows.length !== 1 || rows[0].title !== "alice note") {
+        throw new Error("title became: " + (rows[0] && rows[0].title));
+      }
+    });
+
+    // Alice updates her row, attempts to rewrite owner — patch is stripped.
+    const updated = update(tableName, aliceRow.id,
+      { _userIdentifier: "evil@x", title: "renamed" }, userA);
+    check("update strips _userIdentifier from patch (alice retains ownership)", () => {
+      if (updated._userIdentifier !== "alice@test") {
+        throw new Error("owner became: " + updated._userIdentifier);
+      }
+      if (updated.title !== "renamed") {
+        throw new Error("title became: " + updated.title);
+      }
+    });
+
+    // Alice can delete her own row.
+    remove(tableName, aliceRow.id, userA);
+    check("alice can delete her own row", () => {
+      const rows = select(tableName, {}, userA);
+      if (rows.length !== 1) throw new Error("expected 1 row, got " + rows.length);
+    });
+
+    // Empty-table select for Bob still 0.
+    check("bob still sees 0 rows after alice's delete", () => {
+      const rows = select(tableName, {}, userB);
+      if (rows.length !== 0) throw new Error("expected 0 rows, got " + rows.length);
+    });
+
+    console.log("row access control test: " + passed + " passed, " + failed + " failed");
+    if (failed > 0) throw new Error("row access control test failures: " + failed);
+  } finally {
+    if (sheet) {
+      try { ss().deleteSheet(sheet); } catch (e) { console.warn("cleanup sheet:", e && e.message); }
+    }
+    if (metaRowsAdded > 0) {
+      try {
+        const lastRow = metaSheet.getLastRow();
+        metaSheet.deleteRows(lastRow - metaRowsAdded + 1, metaRowsAdded);
+      } catch (e) { console.warn("cleanup _meta rows:", e && e.message); }
+    }
+    _schemaCache = null;
+  }
+}

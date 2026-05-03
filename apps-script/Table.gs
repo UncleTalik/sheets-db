@@ -156,7 +156,29 @@ function findRowIndexById(sheet, id) {
   return pos < 0 ? -1 : pos + 2; // +2: header row + 1-indexed
 }
 
-function select(table, where) {
+function isRowScoped_(header) {
+  return header.indexOf(MAGIC_COL_USER_ID_) >= 0;
+}
+
+// Resolve and normalize the caller's identity for a row-scoped op. Throws
+// `unauthorized` if the caller is missing — defense-in-depth against future
+// callers that forget to thread `user` through.
+function callerEmail_(user) {
+  if (!user || !user.email) {
+    throw appError("unauthorized", "row-scoped table requires an authenticated user");
+  }
+  return normalizeEmail_(user.email);
+}
+
+// Mismatch returns `not_found` (not `unauthorized`) so callers can't
+// enumerate which IDs exist across owners.
+function assertRowOwnership_(row, callerEmail, id) {
+  if (normalizeEmail_(row[MAGIC_COL_USER_ID_]) !== callerEmail) {
+    throw appError("not_found", "no row with id=" + id);
+  }
+}
+
+function select(table, where, user) {
   const sheet = getSheet(table);
   const last = sheet.getLastRow();
   if (last < 2) return [];
@@ -164,6 +186,13 @@ function select(table, where) {
   const header = values.shift().map(String);
   const typeOf = {};
   tableSchema(table).forEach(c => { typeOf[c.column] = c.type; });
+
+  if (typeOf[MAGIC_COL_USER_ID_]) {
+    // Object.assign overwrites the whole field entry, so this beats any
+    // client-supplied value, including operator-shape ones like {in:[...]}.
+    where = Object.assign({}, where, { [MAGIC_COL_USER_ID_]: callerEmail_(user) });
+  }
+
   const matcher = buildMatcher_(where || {}, typeOf);
   const out = [];
   for (let i = 0; i < values.length; i++) {
@@ -176,7 +205,8 @@ function select(table, where) {
 function insert(table, row, user) {
   const sheet = getSheet(table);
   const header = getHeader(sheet);
-  const clean = validateRow(table, row);
+  if (isRowScoped_(header) && row) delete row[MAGIC_COL_USER_ID_];
+  const clean = validateRow(table, row, { user: user, isInsert: true });
   sheet.appendRow(header.map(col => toCell(clean[col])));
   return clean;
 }
@@ -189,6 +219,11 @@ function update(table, id, patch, user) {
   const header = getHeader(sheet);
   const current = rowToObj(header, sheet.getRange(rowIdx, 1, 1, header.length).getValues()[0]);
 
+  if (isRowScoped_(header)) {
+    assertRowOwnership_(current, callerEmail_(user), id);
+    delete patch[MAGIC_COL_USER_ID_];
+  }
+
   // Merge, then validate the full row. Force id; refresh updatedAt if the schema has it.
   const merged = Object.assign({}, current, patch, { id });
   if (header.indexOf("updatedAt") >= 0) merged.updatedAt = new Date().toISOString();
@@ -198,10 +233,15 @@ function update(table, id, patch, user) {
   return clean;
 }
 
-function remove(table, id) {
+function remove(table, id, user) {
   const sheet = getSheet(table);
   const rowIdx = findRowIndexById(sheet, id);
   if (rowIdx < 0) throw appError("not_found", "no row with id=" + id);
+  const header = getHeader(sheet);
+  if (isRowScoped_(header)) {
+    const current = rowToObj(header, sheet.getRange(rowIdx, 1, 1, header.length).getValues()[0]);
+    assertRowOwnership_(current, callerEmail_(user), id);
+  }
   sheet.deleteRow(rowIdx);
   return { id };
 }

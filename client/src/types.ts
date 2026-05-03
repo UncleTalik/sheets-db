@@ -107,11 +107,27 @@ export interface TableQuery<T = Row> {
    * Add an AND-merged filter clause. Same-field clauses replace each other —
    * combine multiple operators on one field in a single call:
    * `.where({ amount: { gt: 5, lte: 10 } })`.
+   *
+   * Magic columns: any column whose name starts with `_` is server-managed.
+   * Filters supplied for them are silently overridden — e.g. on a row-scoped
+   * table (one with a `_userIdentifier` column) the server clamps every
+   * `select` to the caller's own rows regardless of what you pass here.
    */
   where(filter: Where): TableQuery<T>;
   select(): Promise<T[]>;
   selectOne(): Promise<T | null>;
+  /**
+   * Insert a row. Magic columns (names starting with `_`) are server-managed;
+   * any value supplied for them is ignored. On a row-scoped table the server
+   * stamps `_userIdentifier` with the caller's email automatically.
+   */
   insert(row: Partial<T>): Promise<T>;
+  /**
+   * Update a row. Magic columns (names starting with `_`) cannot be modified
+   * via update — values supplied for them in the patch are stripped. On a
+   * row-scoped table, attempting to update a row owned by a different user
+   * returns `not_found`.
+   */
   update(id: string, patch: Partial<T>): Promise<T>;
   delete(id: string): Promise<{ id: string }>;
 }

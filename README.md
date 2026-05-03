@@ -258,6 +258,56 @@ try {
 Error codes: `unauthorized`, `validation`, `not_found`, `bad_request`,
 `busy`, `misconfigured`, `internal`.
 
+## Row-level access control
+
+By default, every email in `_allowlist` can read, write, and delete every row
+in every table. To restrict a table so each row is only visible and mutable
+by the user who created it, add a column literally named `_userIdentifier`:
+
+```ts
+await db.provision({
+  tables: {
+    notes: [
+      { column: "id",              type: "string",   required: true, unique: true, default: "auto" },
+      { column: "createdAt",       type: "datetime", required: true, default: "now" },
+      { column: "title",           type: "string",   required: true },
+      { column: "body",            type: "string" },
+      { column: "_userIdentifier", type: "string",   required: true },
+    ],
+  },
+});
+```
+
+Once the column exists, the backend treats the table as **row-scoped**:
+
+- **Insert** stamps `_userIdentifier` with the caller's verified email
+  (lowercased). Any value supplied by the client is ignored.
+- **Select** silently clamps the query to rows owned by the caller. Filters
+  on `_userIdentifier` are overridden — `where({ _userIdentifier: "other@x" })`
+  still returns only the caller's rows.
+- **Update** strips `_userIdentifier` from the patch (the column is
+  immutable). Updating a row owned by another user returns `not_found` —
+  the same shape as a missing ID, so callers can't enumerate which IDs
+  exist across owners.
+- **Delete** behaves the same: cross-user deletes return `not_found`.
+- **The owner has no override.** The `OWNER_EMAIL` script property gates
+  `provision`, not row access — for `select`/`insert`/`update`/`delete`
+  the owner is filtered exactly like any other allowlisted user.
+
+Tables **without** the `_userIdentifier` column are unchanged: every
+allowlisted user shares full access. Mixed tables in the same spreadsheet
+work fine — `expenses` can stay shared while `notes` is per-user.
+
+> ⚠️ **Migration warning.** Adding `_userIdentifier` to an *existing*
+> populated table makes every pre-existing row invisible to RPC callers
+> (their `_userIdentifier` cell is empty, so no caller's email matches).
+> Backfill the column by hand in the spreadsheet UI before turning on the
+> restriction, or accept that legacy rows are unreachable.
+
+The leading-underscore prefix is the magic-column convention — any future
+server-managed column will follow the same shape. Don't name your own
+columns with a leading underscore.
+
 ## System tables
 
 Sheet names that start with `_` are reserved for SheetsDB's own

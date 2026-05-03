@@ -23,7 +23,7 @@ function doPost(e) {
 
 function doGet() {
   // Health check — useful when you paste the /exec URL into a browser.
-  return json({ ok: true, data: { service: "sheetsdb", version: "1.2.0" } });
+  return json({ ok: true, data: { service: "sheetsdb", version: "1.3.0" } });
 }
 
 function dispatch(op, user, req) {
@@ -34,7 +34,7 @@ function dispatch(op, user, req) {
     case "select":
       requireString(req.table, "table");
       rejectSystemTable(req.table);
-      return select(req.table, req.where || {});
+      return select(req.table, req.where || {}, user);
 
     case "insert":
       requireString(req.table, "table");
